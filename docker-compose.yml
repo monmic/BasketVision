@@ -1,0 +1,93 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: basketvision
+      POSTGRES_USER: basketvision
+      POSTGRES_PASSWORD: basketvision
+    ports:
+      - "5433:5432"
+    volumes:
+      - basketvision_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U basketvision -d basketvision"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      ConnectionStrings__Default: Host=db;Port=5432;Database=basketvision;Username=basketvision;Password=basketvision
+      Auth__SigningKey: ${AUTH_SIGNING_KEY:?Set AUTH_SIGNING_KEY in .env}
+      Auth__SecureCookies: ${AUTH_SECURE_COOKIES:-false}
+      Seed__Admin__Email: ${SEED_ADMIN_EMAIL:-}
+      Seed__Admin__Password: ${SEED_ADMIN_PASSWORD:-}
+      Seed__Demo__Email: ${SEED_DEMO_EMAIL:-}
+      Seed__Demo__Password: ${SEED_DEMO_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8080'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: ./vision
+    environment:
+      DATABASE_URL: postgresql://basketvision:basketvision@db:5432/basketvision
+      ANALYSIS_MODE: vision
+      YOLO_MODEL: yolo26n.pt
+      PERSON_FRAME_STRIDE: 3
+      PERSON_CONFIDENCE: 0.10
+      PERSON_IMGSZ: 640
+      PERSON_TRACKER_CONFIG: person_tracker_diagnostic.yaml
+      BALL_MODEL: yolo26n.pt
+      BALL_FRAME_STRIDE: 1
+      BALL_CONFIDENCE: 0.02
+      BALL_IMGSZ: 960
+      BALL_USE_TILES: "true"
+      BALL_TILE_STRIDE: 3
+      BALL_TILE_IMGSZ: 640
+      BALL_TILE_OVERLAP: 0.15
+      BALL_TRACK_MAX_GAP_SECONDS: 1.5
+      BALL_TRACK_BASE_DISTANCE_PX: 45
+      BALL_TRACK_MAX_SPEED_PX_PER_SECOND: 1200
+      BALL_TRACK_MIN_HITS: 3
+      BALL_TRACK_MAX_MISSES: 6
+      BALL_TRACK_MAX_WEAK_UPDATES: 6
+      BALL_ACCEPTED_MIN_SCORE: 0.025
+      BALL_TRACK_UPDATE_MIN_SCORE: 0.018
+      BALL_TRACK_NEW_MIN_SCORE: 0.080
+      BALL_TRACK_NEW_MIN_CONFIDENCE: 0.12
+      BALL_STATIC_MIN_HITS: 6
+      BALL_STATIC_MAX_SPEED_PX_PER_SECOND: 12
+      BALL_STATIC_PENALTY: 0.35
+      BALL_DEBUG_EXPORT: "true"
+      BALL_DEBUG_MAX_FRAMES: 20
+      BALL_DEBUG_MIN_INTERVAL_SECONDS: 1.0
+      BALL_DEBUG_JPEG_QUALITY: 85
+      MAX_BALL_POINTS: 20000
+      ANALYSIS_DIR: /app/storage/analysis
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  basketvision_db:

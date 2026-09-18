@@ -1,0 +1,7 @@
+{
+  "Plans": {
+    "Free": {"VideoAnalysis":true,"AdvancedEvents":false,"ExportCsv":false,"ExportPdf":false,"MaxVideoDurationMinutes":10,"MaxAnalysesPerMonth":2,"MaxConcurrentJobs":1,"MaxStorageBytes":2147483648},
+    "Pro": {"VideoAnalysis":true,"AdvancedEvents":true,"ExportCsv":true,"ExportPdf":false,"MaxVideoDurationMinutes":120,"MaxAnalysesPerMonth":20,"MaxConcurrentJobs":1,"MaxStorageBytes":21474836480},
+    "Advanced": {"VideoAnalysis":true,"AdvancedEvents":true,"ExportCsv":true,"ExportPdf":true,"MaxVideoDurationMinutes":180,"MaxAnalysesPerMonth":100,"MaxConcurrentJobs":3,"MaxStorageBytes":107374182400}
+  }
+}
