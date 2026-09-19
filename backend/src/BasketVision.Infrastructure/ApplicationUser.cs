@@ -11,4 +11,5 @@ public sealed class AuthSession
     public string RefreshTokenHash { get; set; } = "";
     public DateTime ExpiresAt { get; set; }
     public DateTime? RevokedAt { get; set; }
+    public DateTime? LastSeenAt { get; set; }
 }

@@ -28,6 +28,8 @@ with sync_playwright() as p:
         expect(page.get_by_role("button", name="Esci")).to_be_visible()
 
     login("ADMIN")
+    expect(page.get_by_role("heading", name="Monitoraggio amministrativo")).to_be_visible()
+    expect(page.locator(".admin-users").get_by_text(settings["SEED_ADMIN_EMAIL"], exact=True)).to_be_visible()
     expect(page.get_by_text("Unlimited — Admin", exact=True)).to_be_visible()
     games = page.locator("section").filter(has=page.get_by_role("heading", name="Nuova partita")).locator("select")
     expect(games.locator("option").nth(1)).to_be_attached()
@@ -43,6 +45,7 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Esci").click()
     expect(page.get_by_role("heading", name="Accedi")).to_be_visible()
     login("DEMO")
+    expect(page.get_by_role("heading", name="Monitoraggio amministrativo")).to_have_count(0)
     expect(page.get_by_text("Free", exact=True)).to_be_visible()
     expect(page.get_by_text("Eventi avanzati: 🔒 bloccato dal piano", exact=True)).to_be_visible()
     expect(page.get_by_text("Gestione piani utenti", exact=True)).to_have_count(0)

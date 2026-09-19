@@ -61,6 +61,12 @@ public static class Auth
                     foreach (var claim in identity.FindAll(ClaimTypes.Role).ToList()) identity.RemoveClaim(claim);
                     var roles = await db.UserRoles.Where(r => r.UserId == uid).Join(db.Roles, r => r.RoleId, r => r.Id, (ur,r) => r.Name).ToListAsync();
                     foreach (var role in roles) identity.AddClaim(new Claim(ClaimTypes.Role, role!));
+                    var now = DateTime.UtcNow;
+                    var cutoff = now.AddMinutes(-1);
+                    // Bound writes despite the existing job polling and multiple browser tabs.
+                    await db.AuthSessions.Where(s => s.Id == sid && s.RevokedAt == null
+                        && (s.LastSeenAt == null || s.LastSeenAt < cutoff))
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.LastSeenAt, now));
                 }
             };
         });
@@ -113,6 +119,7 @@ public static class Auth
         app.MapGet("/auth/me", async (ICurrentUser user, AccessService access) => Results.Ok(await access.Me(user.UserId!.Value)));
 
         var admin = app.MapGroup("/api/admin").RequireAuthorization(p => p.RequireRole(Roles.Admin));
+        admin.MapGet("/dashboard", AdminDashboard.Get);
         admin.MapGet("/plans", async (BasketVisionDbContext db) => Results.Ok(await db.Plans.Include(x => x.Entitlements).ToListAsync()));
         admin.MapGet("/users", async (BasketVisionDbContext db) => Results.Ok(await db.Users
             .Select(u => new { u.Id, u.Email, subscription = db.Subscriptions.Where(s => s.UserId == u.Id)
@@ -144,6 +151,7 @@ public sealed class TokenService(IConfiguration config, UserManager<ApplicationU
         var access = new JwtSecurityTokenHandler().WriteToken(token);
         var refresh = Convert.ToHexString(RandomNumberGenerator.GetBytes(48));
         session.RefreshTokenHash = Hash(refresh);
+        session.LastSeenAt = DateTime.UtcNow;
         var secure = config.GetValue("Auth:SecureCookies", true);
         http.Response.Cookies.Append("bv_refresh", refresh, new CookieOptions { HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Strict, Path = "/auth", Expires = session.ExpiresAt });
         http.Response.Cookies.Append("bv_media", access, new CookieOptions { HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Strict, Path = "/api", Expires = expires });

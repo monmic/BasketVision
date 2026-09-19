@@ -45,7 +45,7 @@ public sealed class MigrationTests
         await using var migrated=new BasketVisionDbContext(options);
         var game=await migrated.Games.IgnoreQueryFilters().SingleAsync();
         Assert.Equal(gameId,game.Id); Assert.Null(game.OwnerUserId);
-        Assert.Equal(2,(await migrated.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.Equal(migrated.Database.GetMigrations().Count(),(await migrated.Database.GetAppliedMigrationsAsync()).Count());
         Assert.Empty(await migrated.Games.ToListAsync());
     }
 }

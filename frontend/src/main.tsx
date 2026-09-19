@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './style.css';
+import {AdminDashboard} from './AdminDashboard';
 
 import {API, apiFetch as fetch, Session, AccountPanel, errorMessage, type Me} from './auth';
 type Game = {id:string,name:string,teams:{id:string,name:string,side:string}[],videoPath?:string};
@@ -212,6 +213,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
 
  return <main>
    <AccountPanel me={me} reload={reloadMe} logout={logout}/>
+   {me.roles.includes('Admin')&&<AdminDashboard/>}
    <div className="page-title"><div><h1>BasketVision</h1><p>Analisi automatica eventi basket da video</p></div>{activeAnalyses.length>0&&<span className="running-badge">{activeAnalyses.length} analisi in background</span>}</div>
 
    {activeAnalyses.length>0&&<section className="card background-jobs"><div className="section-heading"><div><h2>Analisi in background</h2><p>I job continuano nel worker anche se cambi partita, ricarichi la pagina o chiudi il browser.</p></div></div><div className="job-list">{activeAnalyses.map(a=><div key={a.analysisId} className="job-row"><button className="job-open" onClick={()=>selectGame(a.gameId)}><div className="job-main"><b>{a.gameName}</b><span>{a.status==='Pending'?'In coda':a.status==='Paused'?'In pausa':'Elaborazione CV'}</span></div><div className="job-progress"><div className="progress-track"><div className="progress-fill" style={{width:`${Math.max(1,a.progress)}%`}}/></div><strong>{a.progress}%</strong></div></button><div className="job-actions">{a.status==='Paused'?<button onClick={()=>resumeAnalysis(a.analysisId)}>Riprendi</button>:<button onClick={()=>pauseAnalysis(a.analysisId)}>Pausa</button>}<button className="danger" onClick={()=>deleteAnalysis(a.analysisId)}>Elimina</button></div></div>)}</div></section>}
