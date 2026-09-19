@@ -1,0 +1,11 @@
+basketvision.it, www.basketvision.it {
+	# Preserve paths: ASP.NET endpoints already include /api and /auth.
+	@backend path /api/* /auth/*
+	handle @backend {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:80
+	}
+}

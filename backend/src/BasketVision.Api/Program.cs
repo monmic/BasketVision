@@ -9,14 +9,16 @@ using Microsoft.AspNetCore.Http.Features;
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("plans.json", optional: false).AddEnvironmentVariables();
 builder.AddAuth();
+builder.AddDeploymentConfiguration();
 builder.Services.AddSingleton<StoragePaths>();
 
 const long maxVideoUploadBytes = 10L * 1024 * 1024 * 1024; // 10 GB for local development
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxVideoUploadBytes);
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = maxVideoUploadBytes);
-builder.Services.AddDbContext<BasketVisionDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+builder.Services.AddDbContext<BasketVisionDbContext>(o => o.UseNpgsql(DeploymentConfiguration.DatabaseConnection(builder.Configuration)));
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
-    .WithOrigins(builder.Configuration["Frontend:Origin"] ?? "http://localhost:5173")
+    .WithOrigins(new[] { builder.Configuration["Frontend:Origin"] ?? "http://localhost:5173", builder.Configuration["Frontend:AdditionalOrigin"] }
+        .Where(origin => !string.IsNullOrWhiteSpace(origin)).Select(origin => origin!).ToArray())
     .AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -24,6 +26,7 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Ad
 var app = builder.Build();
 if (string.IsNullOrWhiteSpace(app.Configuration["Auth:SigningKey"]) || System.Text.Encoding.UTF8.GetByteCount(app.Configuration["Auth:SigningKey"]!) < 32)
     throw new InvalidOperationException("Configure Auth__SigningKey with at least 32 random bytes.");
+if (!string.IsNullOrWhiteSpace(app.Configuration["ReverseProxy:KnownProxy"])) app.UseForwardedHeaders();
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -35,6 +38,7 @@ await Bootstrap.Initialize(app.Services, app.Configuration);
 app.MapAuth();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+app.MapGet("/api/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 
 app.MapPost("/api/games", async (CreateGameRequest req, BasketVisionDbContext db, ICurrentUser user) =>
 {

@@ -63,6 +63,7 @@ public sealed class AuthorizationTests(ApiFactory factory) : IClassFixture<ApiFa
         var client = factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/games")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/health")).StatusCode);
     }
     [Fact] public async Task Free_under_quota_creates_job_and_usage()
     {

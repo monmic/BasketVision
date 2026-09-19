@@ -1,0 +1,166 @@
+name: basketvision-prod
+
+x-runtime: &runtime
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  networks:
+    - production
+
+services:
+  caddy:
+    <<: *runtime
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      production:
+        ipv4_address: ${CADDY_IPV4:-172.30.80.2}
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+  db:
+    <<: *runtime
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env.production}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env.production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  api:
+    <<: *runtime
+    build: ./backend
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Database__Host: db
+      Database__Name: ${POSTGRES_DB:?Set POSTGRES_DB}
+      Database__User: ${POSTGRES_USER:?Set POSTGRES_USER}
+      Database__Password: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      Auth__SigningKey: ${AUTH_SIGNING_KEY:?Set AUTH_SIGNING_KEY in .env.production}
+      Auth__SecureCookies: "true"
+      Seed__Admin__Email: ${SEED_ADMIN_EMAIL:?Set SEED_ADMIN_EMAIL}
+      Seed__Admin__Password: ${SEED_ADMIN_PASSWORD:?Set SEED_ADMIN_PASSWORD}
+      Seed__Demo__Email: ${SEED_DEMO_EMAIL:?Set SEED_DEMO_EMAIL}
+      Seed__Demo__Password: ${SEED_DEMO_PASSWORD:?Set SEED_DEMO_PASSWORD}
+      Frontend__Origin: https://basketvision.it
+      Frontend__AdditionalOrigin: https://www.basketvision.it
+      ReverseProxy__KnownProxy: ${CADDY_IPV4:-172.30.80.2}
+      AllowedHosts: basketvision.it;www.basketvision.it;api;localhost
+      Storage__Root: /app/storage
+    volumes:
+      - storage_data:/app/storage
+      - api_keys:/root/.aspnet/DataProtection-Keys
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    <<: *runtime
+    build:
+      context: ./vision
+      dockerfile: Dockerfile.prod
+    scale: 1
+    init: true
+    stop_grace_period: 2m
+    environment:
+      # Empty DSN makes psycopg use libpq PG* variables, without URI escaping secrets.
+      DATABASE_URL: ""
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:?Set POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      ANALYSIS_MODE: vision
+      # Same models as development; only their cache directory changes.
+      YOLO_MODEL: /app/models/yolo26n.pt
+      BALL_MODEL: /app/models/yolo26n.pt
+      PERSON_FRAME_STRIDE: 3
+      PERSON_CONFIDENCE: 0.10
+      PERSON_IMGSZ: 640
+      PERSON_TRACKER_CONFIG: person_tracker_diagnostic.yaml
+      BALL_FRAME_STRIDE: 1
+      BALL_CONFIDENCE: 0.02
+      BALL_IMGSZ: 960
+      BALL_USE_TILES: "true"
+      BALL_TILE_STRIDE: 3
+      BALL_TILE_IMGSZ: 640
+      BALL_TILE_OVERLAP: 0.15
+      BALL_TRACK_MAX_GAP_SECONDS: 1.5
+      BALL_TRACK_BASE_DISTANCE_PX: 45
+      BALL_TRACK_MAX_SPEED_PX_PER_SECOND: 1200
+      BALL_TRACK_MIN_HITS: 3
+      BALL_TRACK_MAX_MISSES: 6
+      BALL_TRACK_MAX_WEAK_UPDATES: 6
+      BALL_ACCEPTED_MIN_SCORE: 0.025
+      BALL_TRACK_UPDATE_MIN_SCORE: 0.018
+      BALL_TRACK_NEW_MIN_SCORE: 0.080
+      BALL_TRACK_NEW_MIN_CONFIDENCE: 0.12
+      BALL_STATIC_MIN_HITS: 6
+      BALL_STATIC_MAX_SPEED_PX_PER_SECOND: 12
+      BALL_STATIC_PENALTY: 0.35
+      BALL_DEBUG_EXPORT: "true"
+      BALL_DEBUG_MAX_FRAMES: 20
+      BALL_DEBUG_MIN_INTERVAL_SECONDS: 1.0
+      BALL_DEBUG_JPEG_QUALITY: 85
+      MAX_BALL_POINTS: 20000
+      ANALYSIS_DIR: /app/storage/analysis
+      YOLO_CONFIG_DIR: /app/models/settings
+    volumes:
+      - storage_data:/app/storage
+      - model_cache:/app/models
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    <<: *runtime
+    build: ./frontend
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  production:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${PROD_SUBNET:-172.30.80.0/24}
+          ip_range: ${PROD_DYNAMIC_RANGE:-172.30.80.128/25}
+
+volumes:
+  postgres_data:
+  storage_data:
+  caddy_data:
+  caddy_config:
+  api_keys:
+  model_cache:

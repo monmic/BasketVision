@@ -152,3 +152,213 @@ La suite usa un PostgreSQL Docker separato su tmpfs e HTTP con JWT reali. Verifi
 Validazione iniziale eseguita: 16 test backend/PostgreSQL, 4 regressioni del tracker nel container Python, smoke browser Admin/Free (login, reload, logout, video e debug), e un upload reale con ffprobe seguito da autorizzazione, pausa/ripresa, completamento CV-02.4, conteggio utilizzi ed eliminazione. Quest'ultimo test usa un database temporaneo separato, senza consumare quote locali. La migrazione è stata provata anche sulla copia del database locale: partita e 6 analisi conservate. Gli script opzionali sono `scripts/smoke_auth.py` (Playwright + Edge, stack locale) e `scripts/smoke_worker.py` (API temporanea sulla porta 18080 e worker/database isolati).
 
 Riferimenti: [JWT bearer in ASP.NET Core](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/configure-jwt-bearer-authentication) e [migrazioni EF Core](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/).
+
+## Deploy production/demo su Oracle Cloud
+
+Il file **`docker-compose.prod.yml` è autonomo**: non combinarlo con `docker-compose.yml`. Usa il progetto Docker `basketvision-prod`, una rete e volumi dedicati. Lo sviluppo locale mantiene i propri file, porte, credenziali e dati. Questi comandi sono da eseguire sulla VM Ubuntu; la preparazione del repository non effettua deploy remoti né modifiche DNS.
+
+### Architettura e risorse
+
+Solo Caddy pubblica **80/tcp e 443/tcp**. `/api/*` e `/auth/*` vanno direttamente ad `api:8080`; gli altri percorsi vanno a `web:80`. Non ci sono rewrite: gli endpoint backend includono già quei prefissi. Il frontend usa richieste relative `/api/...` e `/auth/...`, senza localhost. `VITE_API_URL`, se usato in sviluppo, rappresenta l'origine del server, non il prefisso: non impostarlo a `/api`, altrimenti si otterrebbe `/api/api/...`.
+
+PostgreSQL, API, web e worker non pubblicano porte host. La rete bridge consente l'uscita verso Internet, necessaria per ACME e il primo download dei pesi; non è una rete Docker `internal: true`. Caddy ha un IP privato fisso e l'API accetta `X-Forwarded-For/Proto` solo da quell'IP. CORS ammette esclusivamente `https://basketvision.it` e `https://www.basketvision.it`. I cookie di autenticazione sono Secure/HttpOnly. Il web è read-only con directory temporanee scrivibili; API, worker, database e Caddy mantengono le scritture necessarie. Tutti i servizi hanno restart `unless-stopped` e log JSON ruotati a 10 MB × 3 file per container.
+
+**1 GB RAM + 4 GB swap è una configurazione sperimentale per questa pipeline.** Il worker è unico e processa un job alla volta; non usare `--scale worker=2`. I piani possono consentire più job in coda, ma questo non crea processi CV aggiuntivi. Modelli, risoluzioni, stride e soglie restano quelli locali; cambia solo la directory persistente dei pesi. Nessun limite RAM rigido viene imposto, per non causare OOM artificiali. PyTorch, le due istanze YOLO e le build possono comunque esaurire memoria/swap o rendere la VM poco reattiva. Non è garantito il funzionamento del carico CV su 1 GB: iniziare con pochi secondi di video e monitorare. Lo stack può servire come demo di interfaccia anche lasciando il worker fermo (`dc stop worker`).
+
+### 1. Prerequisiti VM
+
+Usare Ubuntu LTS supportata, una VM con IP pubblico raggiungibile, subnet pubblica con route verso Internet Gateway, accesso SSH e spazio disco per immagini Docker, video, swap e backup. Verificare l'architettura con `uname -m`: eventuali immagini compilate altrove devono essere per la stessa architettura. Controllare prima le risorse:
+
+```bash
+uname -m
+free -h
+swapon --show
+df -h
+```
+
+Se lo swap non è già configurato e `/swapfile` non esiste, predisporre i 4 GB previsti (non sovrascrivere uno swap esistente):
+
+```bash
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### 2. Docker Engine e Compose
+
+Installare Engine e il plugin Compose dal [repository ufficiale Docker per Ubuntu](https://docs.docker.com/engine/install/ubuntu/), seguendo anche la rimozione di eventuali pacchetti in conflitto prevista dalla guida. Su una VM nuova:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git openssl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME:-$VERSION_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker version
+sudo docker compose version
+```
+
+I comandi successivi assumono un utente autorizzato a usare Docker; altrimenti anteporre `sudo`. L'accesso al gruppo `docker` equivale a privilegi amministrativi sull'host.
+
+### 3–5. Repository e configurazione separata
+
+```bash
+git clone <URL_REPOSITORY> BasketVision
+cd BasketVision
+umask 077
+cp .env.production.example .env.production
+chmod 600 .env.production
+nano .env.production
+```
+
+Compilare `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `AUTH_SIGNING_KEY` e le quattro variabili seed Admin/Demo. Generare segreti distinti con `openssl rand -hex 32`; le password Identity devono includere maiuscola, minuscola, numero e simbolo ed essere lunghe almeno 12 caratteri. Ad esempio il comando `printf 'Aa1!'; openssl rand -hex 24` produce una password casuale con quei requisiti. Non copiare le credenziali del `.env` locale e non committare `.env.production`.
+
+Usare nomi DB/utente semplici (lettere, cifre, underscore). Le password sono passate separatamente, senza concatenarle in un URI: caratteri speciali vengono gestiti dal connection-string builder .NET e dalle variabili libpq `PG*` del worker. Se si usano `$` o `#` nel file env, seguire la sintassi di quoting dotenv; i valori esadecimali generati evitano questa ambiguità.
+
+Se `172.30.80.0/24` collide con reti Docker/VPN esistenti, cambiare insieme `PROD_SUBNET`, `PROD_DYNAMIC_RANGE` e `CADDY_IPV4`. Il range dinamico deve essere contenuto nella subnet; l'IP del proxy deve essere nella subnet ma **fuori dal range dinamico**, libero e diverso dal gateway. Questo impedisce che Docker assegni l'IP fidato a un altro servizio prima dell'avvio di Caddy. `COMPOSE_PARALLEL_LIMIT=1` evita build simultanee tra servizi. Ogni comando deve usare **`--env-file .env.production`**, anche `ps` e `logs`, per non leggere il `.env` di sviluppo. Per comodità, dalla root del repository:
+
+```bash
+dc() { docker compose -f docker-compose.prod.yml --env-file .env.production "$@"; }
+dc config --quiet
+```
+
+`config` senza `--quiet` mostra i segreti risolti: non pubblicarne l'output. Il seed crea gli account al primo avvio e non cambia password/ruoli esistenti. Cambiare `POSTGRES_PASSWORD` nel file dopo l'inizializzazione non cambia automaticamente la password nel database: una rotazione va coordinata con PostgreSQL. Analogamente, modificare le variabili seed non reimposta le password Identity.
+
+### 6–7. DNS e accesso Oracle
+
+Configurare manualmente:
+
+- Record A `basketvision.it` → `PUBLIC_IP_VM`.
+- Record A `www.basketvision.it` → `PUBLIC_IP_VM`, oppure CNAME `www` → `basketvision.it`.
+- Non lasciare record AAAA verso un IPv6 non raggiungibile dalla VM.
+- Nella Security List/NSG applicata alla VNIC: ingress stateful **80/tcp e 443/tcp** da Internet; **22/tcp soltanto dagli IP amministrativi**. Nessuna regola per 5432, 5433, 8080 o 5173.
+- Verificare anche il firewall Ubuntu e mantenere le regole di sistema Oracle. Non svuotare indiscriminatamente iptables. Consentire uscita DNS/HTTPS per immagini, dipendenze, pesi e certificati.
+
+Oracle applica controlli sia alla rete sia all'host: vedere [Security Lists](https://docs.oracle.com/en-us/iaas/Content/Network/Concepts/securitylists.htm) e [firewall nelle immagini Ubuntu OCI](https://blogs.oracle.com/developers/enabling-network-traffic-to-ubuntu-images-in-oracle-cloud-infrastructure).
+
+Caddy avvia il server anche prima della propagazione DNS, ma il certificato pubblico diventerà disponibile solo quando la validazione del dominio riuscirà. Le porte 80/443 devono raggiungere Caddy e il DNS dei due nomi deve essere corretto. I tentativi ACME vengono ripetuti automaticamente; non cancellare i volumi dei certificati per forzarli. Prima di quel momento il redirect HTTP può già funzionare mentre HTTPS/login non sono ancora utilizzabili. Riferimento: [HTTPS automatico Caddy](https://caddyserver.com/docs/automatic-https).
+
+### 8. Primo avvio
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+Sulla VM piccola è preferibile compilare esplicitamente in sequenza, prima di avviare i processi:
+
+```bash
+dc build api
+dc build worker
+dc build web
+dc up -d --no-build
+```
+
+Una singola build può comunque superare la RAM disponibile. Se succede, compilare le immagini su una macchina più capiente della stessa architettura, trasferirle con `docker image save`/`docker image load` e avviare con `--no-build` (i tag predefiniti sono `basketvision-prod-api`, `basketvision-prod-worker`, `basketvision-prod-web`). Non vengono introdotti servizi managed né un registry obbligatorio.
+
+Il worker production usa `vision/Dockerfile.prod`: PyTorch **CPU**, con torch 2.14.0, torchvision 0.29.0 e Ultralytics 8.4.154, le versioni rilevate nel runtime locale durante la preparazione. Si evitano le dipendenze CUDA/NVIDIA scaricate dal Dockerfile generico, senza cambiare algoritmo o modelli. Il Dockerfile locale non cambia. La scelta dell'indice CPU segue le [istruzioni ufficiali PyTorch](https://pytorch.org/get-started/locally/). Le build verificate localmente sono Linux amd64; una VM ARM richiede una build e una verifica dedicate sulla propria architettura.
+
+PostgreSQL diventa healthy prima dell'API; l'API esegue migrazioni e seed prima di ascoltare; worker e web aspettano l'API. La prima analisi può scaricare `yolo26n.pt`, poi conservato nel volume `model_cache`. Per gli accessi iniziali usare le email/password definite nel file production. L'Admin scavalca le quote; il DemoUser parte da Free. Il database production è nuovo: i video e i job locali non sono copiati automaticamente.
+
+### 9–11. Stato, log e test
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production ps
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f --tail=100
+dc logs --tail=100 caddy api worker
+dc exec web wget -qO- http://api:8080/health
+curl -I http://localhost
+curl -I -H 'Host: basketvision.it' http://localhost
+curl -I https://basketvision.it
+curl -fsS https://basketvision.it/api/health
+curl -i https://basketvision.it/api/games
+```
+
+Il test HTTP con `Host: basketvision.it` deve mostrare il redirect a HTTPS; `localhost` da solo non verifica il virtual host del dominio. Dopo DNS/certificati, frontend e `/api/health` devono rispondere; `/api/games` senza Bearer token deve restituire **401**. Nel browser verificare login, upload di un breve video, range DA/A, avvio, pausa/ripresa, completamento e Vision Debug. Durante il test:
+
+```bash
+docker stats --no-stream
+free -h
+swapon --show
+df -h
+docker system df
+sudo journalctl -k --since '1 hour ago' | grep -Ei 'oom|out of memory|killed process'
+```
+
+Un container avviato non dimostra che la VM possa sostenere un'analisi. Se lo swap cresce continuamente o interviene l'OOM killer, fermare il worker e aumentare le risorse prima di usarlo stabilmente.
+
+### Persistenza, spazio disco e backup minimo
+
+I volumi del progetto sono:
+
+| Volume (prefisso `basketvision-prod_`) | Contenuto |
+|---|---|
+| `postgres_data` | PostgreSQL, utenti, piani e job |
+| `storage_data` | `/app/storage/videos` e `/app/storage/analysis`, inclusi checkpoint e debug |
+| `caddy_data`, `caddy_config` | Certificati/chiavi TLS e stato Caddy |
+| `api_keys` | Chiavi Data Protection ASP.NET |
+| `model_cache` | Pesi YOLO e impostazioni Ultralytics |
+
+Su Docker Linux rootful i volumi risiedono normalmente sotto `/var/lib/docker/volumes`; usare `inspect` per il percorso effettivo, senza modificarli a mano:
+
+```bash
+docker volume ls --filter label=com.docker.compose.project=basketvision-prod
+docker volume inspect basketvision-prod_postgres_data basketvision-prod_storage_data
+dc exec api du -sh /app/storage/videos /app/storage/analysis
+df -h
+docker system df
+```
+
+Prima di aggiornamenti o backup coerenti, mettere in pausa i job dall'interfaccia e attendere il checkpoint: il solo `docker stop` non sostituisce la pausa applicativa. Per un backup minimo del DB, eseguire con una shell Bash sulla VM:
+
+```bash
+umask 077
+mkdir -p backups
+backup_date=$(date -u +%Y%m%dT%H%M%SZ)
+dc exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "backups/database-$backup_date.dump"
+test -s "backups/database-$backup_date.dump"
+```
+
+Il dump da solo non include i video. Per una copia coordinata DB/storage, dopo pausa e checkpoint fermare le scritture, eseguire il dump precedente e archiviare il volume:
+
+```bash
+dc stop caddy worker api
+# Eseguire qui il dump PostgreSQL precedente, con db ancora acceso.
+docker run --rm -v basketvision-prod_storage_data:/source:ro -v "$PWD/backups:/backup" alpine:3 sh -c 'tar -czf /backup/storage.tar.gz -C /source .'
+dc start api worker caddy
+```
+
+Conservare copie separate e protette anche di `.env.production`, Caddyfile e dei volumi delle chiavi/certificati. Copiare i backup fuori dalla VM e provare un ripristino su un database separato. Le copie storage possono essere grandi: controllare lo spazio prima di crearle. Non usare `down -v` o `docker volume prune` sul server con dati da conservare.
+
+### 12. Aggiornare, fermare e riavviare
+
+Prima dell'update: pausa/checkpoint dei job, backup DB e storage, nota della revisione corrente. Poi:
+
+```bash
+git pull
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+dc ps
+dc logs --tail=100 api worker caddy
+```
+
+Con 1 GB può essere necessario fare una finestra di manutenzione: `dc stop`, build sequenziali, poi `dc up -d --no-build`. Riprendere i job dall'interfaccia dopo la verifica; non cambiare manualmente il loro stato nel DB. Le migrazioni richiedono un backup: tornare a un'immagine precedente non annulla una migrazione.
+
+```bash
+dc stop                         # ferma, conserva container e volumi
+dc start                        # riavvia i container esistenti
+dc restart caddy                # riavvia solo il proxy
+dc down                         # rimuove container/rete, conserva i volumi
+dc up -d --no-build              # ricrea usando immagini già compilate
+```
+
+Non usare `restart` per applicare nuove variabili environment: usare `up -d`, che ricrea i servizi modificati. La configurazione locale continua a usare `docker compose up --build` e il proprio `.env`.
+
+### Verifiche della configurazione production
+
+Verificati localmente: Compose e Caddyfile validi; build API, frontend TypeScript e worker CPU; 20 test backend (inclusi proxy fidati e password DB con caratteri speciali) e 4 test tracker. Uno stack temporaneo separato, con TLS interno e porte loopback alternative, ha verificato routing Caddy, frontend read-only, `/api/health`, 401 anonimo, login, cookie Secure, refresh, logout e connessione worker tramite `PG*`. I modelli originali si caricano dal volume cache e completano inferenza full-frame/tiled su CPU. Il processo di inferenza minimo ha raggiunto circa 459 MiB RSS sul computer di test: non è una misura del picco dello stack o di un'intera analisi. La VM Oracle da 1 GB e l'emissione dei certificati pubblici restano da verificare dopo il deploy; nessun DNS o server remoto è stato modificato.
