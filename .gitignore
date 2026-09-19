@@ -10,6 +10,7 @@ storage/videos/*
 !.env.production.example
 .tools/
 storage/backups/
+storage/diagnostics/
 **/__pycache__/
 .idea/
 .vs/

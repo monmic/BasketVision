@@ -1,5 +1,7 @@
 # BasketVision CV-02 — Ball Recovery
 
+Diagnostica del campione online 4K/60 fps: [risultati e riproduzione](docs/diagnostic-online-clip.md). La prova offline riproduce il falso positivo sulla scarpa a 10,17 s e confronta i tempi con un profilo ridotto sperimentale; non modifica la configurazione production.
+
 CV-02 parte da **CV-01.3** e mantiene:
 
 - upload locale

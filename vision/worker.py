@@ -9,12 +9,16 @@ from pathlib import Path
 
 import cv2
 import psycopg
+import torch
 from ultralytics import YOLO
 
 DSN = os.getenv("DATABASE_URL", "postgresql://basketvision:basketvision@db:5432/basketvision")
 ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "vision").lower()
 YOLO_MODEL = os.getenv("YOLO_MODEL", "yolo26n.pt")
 BALL_MODEL = os.getenv("BALL_MODEL", YOLO_MODEL)
+VISION_CPU_THREADS = int(os.getenv("VISION_CPU_THREADS", "0"))
+if VISION_CPU_THREADS < 0:
+    raise ValueError("VISION_CPU_THREADS must be zero (library default) or positive")
 
 PERSON_FRAME_STRIDE = max(1, int(os.getenv("PERSON_FRAME_STRIDE", os.getenv("FRAME_STRIDE", "3"))))
 PERSON_CONFIDENCE = float(os.getenv("PERSON_CONFIDENCE", "0.10"))
@@ -64,11 +68,21 @@ _person_model = None
 _ball_model = None
 
 
+def configure_cpu_threads(predictor):
+    # CPU backend initialization can reset PyTorch threads. Apply after setup,
+    # on both isolated predictors, rather than only at module import.
+    if VISION_CPU_THREADS and predictor.device.type == "cpu":
+        if torch.get_num_threads() != VISION_CPU_THREADS:
+            torch.set_num_threads(VISION_CPU_THREADS)
+            print(f"Vision CPU threads: {torch.get_num_threads()}", flush=True)
+
+
 def get_person_model():
     global _person_model
     if _person_model is None:
         print(f"Loading person model: {YOLO_MODEL}", flush=True)
         _person_model = YOLO(YOLO_MODEL)
+        _person_model.add_callback("on_predict_start", configure_cpu_threads)
     return _person_model
 
 
@@ -79,6 +93,7 @@ def get_ball_model():
         # observe full/tiled ball inference with different classes and dimensions.
         print(f"Loading isolated ball model: {BALL_MODEL}", flush=True)
         _ball_model = YOLO(BALL_MODEL)
+        _ball_model.add_callback("on_predict_start", configure_cpu_threads)
     return _ball_model
 
 
