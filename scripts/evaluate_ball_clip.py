@@ -41,6 +41,10 @@ def matches(predictions, truth, threshold):
 def evaluate(report, annotations, threshold=0.5):
     if not 0 < threshold <= 1:
         raise ValueError('IoU must be in (0, 1]')
+    if report.get('sourceVideo') and annotations.get('source') != report['sourceVideo']:
+        raise ValueError('Annotations and report reference different videos')
+    if 'fps' in annotations and not math.isclose(annotations['fps'], report['source']['fps'], rel_tol=1e-6):
+        raise ValueError('Annotations and report have different FPS')
     truth = {}
     for row in annotations['frames']:
         index = row['frame']

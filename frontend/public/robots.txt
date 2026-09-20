@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+
+# Private HTML routes remain crawlable so their noindex can be read.
+# X-Robots-Tag and HTML metadata exclude them from indexing.
+Sitemap: https://basketvision.it/sitemap.xml

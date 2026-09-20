@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="it">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BasketVision — revisione palla</title>
+<style>
+body{font:16px system-ui;margin:24px;background:#101827;color:#eef3fc}button{padding:10px;margin:4px;cursor:pointer}canvas{display:block;max-width:100%;height:auto;background:#000;touch-action:none;cursor:crosshair}p{max-width:1000px}#status{font-weight:600}button:disabled{opacity:.5}
+</style>
+<h1>Revisione della palla</h1>
+<p>Disegna un rettangolo stretto intorno a ogni palla visibile, comprese quelle fuori dal gioco.
+Se la posizione è ambigua, salta il frame. “Nessuna palla” indica assenza verificata.
+Le modifiche restano in questa pagina fino all’esportazione: scarica il JSON prima di chiudere.</p>
+<div><button id="prev">← Precedente</button><button id="next">Successivo →</button>
+<button id="undo">Annulla rettangolo</button><button id="save">Conferma palle</button>
+<button id="empty">Nessuna palla</button><button id="skip">Escludi frame</button>
+<button id="export">Scarica annotations.json</button></div>
+<p id="status" role="status"></p><canvas id="canvas"></canvas>
+<script>
+'use strict';
+const data = /*REVIEW_DATA*/;
+const canvas = document.getElementById('canvas'), ctx = canvas.getContext('2d');
+const status = document.getElementById('status'), img = new Image();
+const reviewed = new Map(), drafts = new Map();
+let current = 0, boxes = [], start = null, pointer = null, ready = false, dirty = false;
+const copy = value => value.map(b => b.slice());
+function refresh() {
+  const sample = data.samples[current];
+  status.textContent = `${data.source} · Frame ${sample.frame} · ${sample.timestamp.toFixed(3)} s · ${current+1}/${data.samples.length} · ${reviewed.size} confermati · ${reviewed.has(sample.frame) ? 'Confermato' : 'Da revisionare'} · ${boxes.length} rettangoli`;
+  document.getElementById('save').disabled = !ready || !boxes.length;
+  document.getElementById('empty').disabled = !ready;
+}
+function draw() {
+  if (!ready) return;
+  ctx.drawImage(img,0,0); ctx.strokeStyle='#00ff88'; ctx.lineWidth=2;
+  for (const b of boxes) ctx.strokeRect(b[0]*canvas.width,b[1]*canvas.height,(b[2]-b[0])*canvas.width,(b[3]-b[1])*canvas.height);
+  if (start && pointer) {ctx.strokeStyle='#ffdf00';ctx.strokeRect(start[0]*canvas.width,start[1]*canvas.height,(pointer[0]-start[0])*canvas.width,(pointer[1]-start[1])*canvas.height);}
+}
+function load(index) {
+  if (start) return;
+  drafts.set(data.samples[current].frame,copy(boxes));
+  current = Math.max(0,Math.min(data.samples.length-1,index)); ready=false;
+  boxes=copy(drafts.get(data.samples[current].frame)||reviewed.get(data.samples[current].frame)||[]);
+  refresh(); img.src=data.samples[current].image;
+}
+img.onload=()=>{canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;ready=true;draw();refresh();};
+function point(e) {const r=canvas.getBoundingClientRect();return [Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))];}
+canvas.onpointerdown=e=>{if(!ready||start||e.button!==0)return;start=point(e);pointer=start;canvas.setPointerCapture(e.pointerId);};
+canvas.onpointermove=e=>{if(start){pointer=point(e);draw();}};
+canvas.onpointerup=e=>{
+  if(!start)return; const end=point(e);
+  const b=[Math.min(start[0],end[0]),Math.min(start[1],end[1]),Math.max(start[0],end[0]),Math.max(start[1],end[1])];
+  if((b[2]-b[0])*canvas.width>=2&&(b[3]-b[1])*canvas.height>=2){boxes.push(b);reviewed.delete(data.samples[current].frame);dirty=true;}
+  start=null;pointer=null;draw();refresh();
+};
+canvas.onpointercancel=()=>{start=null;pointer=null;draw();};
+document.getElementById('prev').onclick=()=>load(current-1);
+document.getElementById('next').onclick=()=>load(current+1);
+document.getElementById('undo').onclick=()=>{boxes.pop();reviewed.delete(data.samples[current].frame);dirty=true;draw();refresh();};
+document.getElementById('save').onclick=()=>{if(ready&&boxes.length){reviewed.set(data.samples[current].frame,copy(boxes));dirty=true;refresh();}};
+document.getElementById('empty').onclick=()=>{boxes=[];reviewed.set(data.samples[current].frame,[]);dirty=true;draw();refresh();};
+document.getElementById('skip').onclick=()=>{boxes=[];reviewed.delete(data.samples[current].frame);dirty=true;load(current+1);};
+document.getElementById('export').onclick=()=>{
+  if(!reviewed.size){alert('Conferma almeno un frame prima di esportare.');return;}
+  const payload={source:data.source,fps:data.fps,policy:'all-visible-balls',frames:[...reviewed].sort((a,b)=>a[0]-b[0]).map(([frame,boxes])=>({frame,boxes}))};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
+  const link=document.createElement('a');link.href=url;link.download='annotations.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);dirty=false;
+};
+window.onbeforeunload=e=>{if(dirty){e.preventDefault();e.returnValue='';}};
+load(0);
+</script>
+</html>

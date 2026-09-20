@@ -1,4 +1,6 @@
 import React, {useEffect, useState} from 'react';
+import {Brand, LandingPage} from './LandingPage';
+import {isPublicHome, PageMetadata} from './PageMetadata';
 
 export const API = import.meta.env.VITE_API_URL ?? '';
 export type Me = {id:string,email:string,roles:string[],plan:string,bypass:boolean,
@@ -72,9 +74,11 @@ export function Session({children}:{children:(me:Me,reload:()=>Promise<void>,log
     }catch{setError('Impossibile contattare il server. Riprova.');}
     finally{setBusy(false);}
   }
-  if(loading) return <main><p>Caricamento sessione…</p></main>;
-  if(!me) return <main className="login"><section className="card"><h1>BasketVision</h1><h2>Accedi</h2><form onSubmit={login}><label>Email<input name="email" type="email" autoComplete="username" required/></label><label>Password<input name="password" type="password" autoComplete="current-password" required/></label><button disabled={busy}>{busy?'Accesso…':'Accedi'}</button></form>{error&&<p role="alert">{error}</p>}</section></main>;
-  return <>{error&&<p role="alert">{error}</p>}{children(me,reload,logout)}</>;
+  const publicPage=isPublicHome()&&!me&&!error;
+  if(publicPage) return <><PageMetadata publicPage/><LandingPage/></>;
+  if(loading) return <><PageMetadata publicPage={false}/><main><p>Caricamento sessione…</p></main></>;
+  if(!me) return <><PageMetadata publicPage={false}/><div className="bv-login"><Brand/><main className="login"><section className="card"><h1>Accedi</h1><p>La tua partita ti aspetta.</p><form onSubmit={login}><label>Email<input name="email" type="email" autoComplete="username" required/></label><label>Password<input name="password" type="password" autoComplete="current-password" required/></label><button disabled={busy}>{busy?'Accesso…':'Accedi'}</button></form>{error&&<p role="alert">{error}</p>}<a href="/">← Torna alla homepage</a></section></main></div></>;
+  return <><PageMetadata publicPage={false}/>{error&&<p role="alert">{error}</p>}{children(me,reload,logout)}</>;
 }
 
 export function AccountPanel({me,reload,logout}:{me:Me,reload:()=>Promise<void>,logout:()=>Promise<void>}){

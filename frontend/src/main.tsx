@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {createRoot} from 'react-dom/client';
+import {createRoot, hydrateRoot} from 'react-dom/client';
 import './style.css';
+import './landing.css';
 import {AdminDashboard} from './AdminDashboard';
 
 import {API, apiFetch as fetch, Session, AccountPanel, errorMessage, type Me} from './auth';
@@ -242,4 +243,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    {report&&<section className="grid"><div className="card"><h2>Statistiche eventi</h2><p>CV-02 migliora la detection/traiettoria della palla; gli eventi basket verranno alimentati dal successivo ShotDetector.</p><table><thead><tr><th>Stat</th>{report.teams.map(t=><th key={t.teamId}>{t.teamName}</th>)}</tr></thead><tbody>{Object.keys(report.teams[0]?.stats??{}).map(k=><tr key={k}><td>{k}</td>{report.teams.map(t=><td key={t.teamId}>{t.stats[k]??0}</td>)}</tr>)}</tbody></table></div><div className="card"><h2>Eventi</h2><div className="events">{report.events.map(ev=><button className="event" key={ev.id} onClick={()=>seek(ev.videoTimestamp)}><b>{ev.videoTimestamp.toFixed(1)}s</b><span>{ev.team??'-'}</span><span>{ev.type}</span><small>{Math.round(ev.confidence*100)}%</small></button>)}</div></div></section>}</>}
  </main>
 }
-createRoot(document.getElementById('root')!).render(<Session>{(me,reloadMe,logout)=><App key={me.id} me={me} reloadMe={reloadMe} logout={logout}/>}</Session>);
+const root=document.getElementById('root')!;
+const application=<Session>{(me,reloadMe,logout)=><App key={me.id} me={me} reloadMe={reloadMe} logout={logout}/>}</Session>;
+if(root.hasChildNodes() && location.pathname==='/' && !location.search) hydrateRoot(root,application);
+else createRoot(root).render(application);

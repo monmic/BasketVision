@@ -39,6 +39,25 @@ di un job, esclude caricamento e warm-up e include eventuale scrittura immagini.
 
 ## Riferimento manuale
 
+Per annotare con il mouse, generare la pagina offline (nessun upload):
+
+```powershell
+docker run --rm `
+  -v "${PWD}/scripts:/diagnostics:ro" `
+  -v "${PWD}/storage:/data" `
+  --entrypoint python basketvision-prod-worker /diagnostics/prepare_ball_review.py `
+  /data/videos/test-online-720p-15fps.mp4 /data/diagnostics/ball-review.html
+Start-Process storage/diagnostics/ball-review.html
+```
+
+La pagina contiene 22 immagini PNG estratte sequenzialmente, una al secondo
+più i controlli a circa 2,87 e 10,17 s. Disegnare tutte le palle visibili e
+premere **Conferma palle**; usare **Nessuna palla** solo per assenza verificata.
+I frame ambigui vanno esclusi. Scaricare `annotations.json` e salvarlo in
+`storage/diagnostics/annotations.json`. Solo i frame confermati sono esportati;
+le bozze non confermate non contribuiscono alle metriche. Le annotazioni non
+sono salvate automaticamente e la pagina non importa sessioni precedenti.
+
 Creare `storage/diagnostics/annotations.json` con questo schema:
 
 ```json

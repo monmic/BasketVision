@@ -64,7 +64,7 @@ for name, width, stride in profiles:
         stages['resize'] += time.perf_counter()-t
         timestamp = index/fps
         count = (index-first)//stride
-        if count % 3 == 0:
+        if count % w.PERSON_FRAME_STRIDE == 0:
             t = time.perf_counter()
             person.track(frame, persist=True, tracker=w.PERSON_TRACKER_CONFIG, classes=[0],
                          conf=w.PERSON_CONFIDENCE, imgsz=w.PERSON_IMGSZ, verbose=False)
@@ -73,7 +73,7 @@ for name, width, stride in profiles:
         full = w.detect_ball_full(ball, frame, timestamp)
         stages['full'] += time.perf_counter()-t
         tiles = []
-        if (count+1) % w.BALL_TILE_STRIDE == 0:
+        if w.BALL_USE_TILES and (count+1) % w.BALL_TILE_STRIDE == 0:
             t = time.perf_counter()
             tiles = w.detect_ball_tiled(ball, frame, timestamp)
             stages['tiled'] += time.perf_counter()-t
@@ -97,6 +97,7 @@ for name, width, stride in profiles:
     elapsed = time.perf_counter()-started
     cap.release()
     result = dict(profile=name, source=metadata, start=args.start, end=args.end,
+                  sourceVideo=Path(args.video).name, cpuThreads=w.torch.get_num_threads(),
                   settings={k: v for k, v in vars(w).items() if k.startswith(('BALL_', 'PERSON_', 'YOLO_')) and isinstance(v, (str, int, float, bool))},
                   resizeWidth=width, stride=stride,
                   elapsedSeconds=elapsed, stagesSeconds=stages, processedBallFrames=len(rows),

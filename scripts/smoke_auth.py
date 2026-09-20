@@ -4,6 +4,7 @@ Reads seed credentials from the ignored .env without printing them.
 Does not create, change or delete games or analyses.
 """
 from pathlib import Path
+import os
 import re
 from playwright.sync_api import sync_playwright, expect
 
@@ -18,7 +19,7 @@ with sync_playwright() as p:
     page = browser.new_page(viewport={"width": 1440, "height": 1000})
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto("http://localhost:5173")
+    page.goto(os.getenv("BASKETVISION_SMOKE_URL", "http://localhost:5173") + "/login")
     expect(page.get_by_role("heading", name="Accedi")).to_be_visible()
 
     def login(role):
@@ -28,12 +29,16 @@ with sync_playwright() as p:
         expect(page.get_by_role("button", name="Esci")).to_be_visible()
 
     login("ADMIN")
+    page.goto(os.getenv("BASKETVISION_SMOKE_URL", "http://localhost:5173") + "/")
+    expect(page.get_by_role("button", name="Esci")).to_be_visible()
+    expect(page.locator('meta[name="robots"]')).to_have_attribute('content', 'noindex, nofollow')
     expect(page.get_by_role("heading", name="Monitoraggio amministrativo")).to_be_visible()
     expect(page.locator(".admin-users").get_by_text(settings["SEED_ADMIN_EMAIL"], exact=True)).to_be_visible()
     expect(page.get_by_text("Unlimited — Admin", exact=True)).to_be_visible()
     games = page.locator("section").filter(has=page.get_by_role("heading", name="Nuova partita")).locator("select")
     expect(games.locator("option").nth(1)).to_be_attached()
     games.select_option(index=1)
+    expect(page).to_have_url(re.compile(r'\?game='))
     page.wait_for_function("document.querySelector('video')?.readyState >= 1", timeout=30000)
     expect(page.get_by_role("heading", name=re.compile("Vision debug"))).to_be_visible(timeout=30000)
     images = page.locator(".debug-gallery img")
