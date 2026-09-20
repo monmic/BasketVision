@@ -96,7 +96,7 @@ services:
       PGUSER: ${POSTGRES_USER:?Set POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       ANALYSIS_MODE: vision
-      VISION_CPU_THREADS: ${VISION_CPU_THREADS:-0}
+      VISION_CPU_THREADS: ${VISION_CPU_THREADS:-2}
       # Same models as development; only their cache directory changes.
       YOLO_MODEL: /app/models/yolo26n.pt
       BALL_MODEL: /app/models/yolo26n.pt

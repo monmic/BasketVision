@@ -2,9 +2,10 @@
 
 ## Thread CPU in produzione
 
-`VISION_CPU_THREADS=0` (default) conserva le scelte delle librerie.
-Impostare `VISION_CPU_THREADS=2` in `.env.production` per provare due thread
-PyTorch sulla A1 a due OCPU. Richiede il worker aggiornato e ricostruito;
+Il Compose di produzione usa due thread PyTorch per default sulla A1 a due OCPU.
+Si può sovrascrivere il valore con `VISION_CPU_THREADS` in `.env.production`;
+`VISION_CPU_THREADS=0` conserva le scelte delle librerie (default del worker
+quando eseguito senza questa variabile). Richiede il worker aggiornato e ricostruito;
 Compose passa la variabile al container. Il callback `on_predict_start`
 applica il valore dopo l'inizializzazione del backend, anche quando i modelli
 persone e palla vengono inizializzati separatamente. Non modifica OpenCV.
