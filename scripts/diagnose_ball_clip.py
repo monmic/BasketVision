@@ -47,6 +47,7 @@ for name, width, stride in profiles:
     first, last = round(args.start * fps), round(args.end * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, first)
     tracker = w.BallTracker()
+    camera_motion = w.CameraMotion() if getattr(w, 'BALL_CAMERA_MOTION_FILTER', False) else None
     stages = dict(decode=0., resize=0., person=0., full=0., tiled=0., filtering=0.)
     rows = []
     started = time.perf_counter()
@@ -84,9 +85,14 @@ for name, width, stride in profiles:
             c['accepted'] = False
             if c['qualityScore'] < w.BALL_TRACK_UPDATE_MIN_SCORE:
                 c['rejectionReason'] = 'score_below_track_update_threshold'
-        tracker.update(trackable, timestamp)
+        motion = camera_motion.update(frame, timestamp) if camera_motion else None
+        if camera_motion:
+            tracker.update(trackable, timestamp, motion)
+        else:
+            tracker.update(trackable, timestamp)
         stages['filtering'] += time.perf_counter()-t
-        rows.append(dict(frame=index, timestamp=timestamp, width=frame.shape[1], height=frame.shape[0], candidates=candidates))
+        rows.append(dict(frame=index, timestamp=timestamp, width=frame.shape[1], height=frame.shape[0],
+                         candidates=candidates, cameraMotion=motion))
         if abs(timestamp-10.166667) < stride/fps/2:
             cv2.imwrite(str(out/f'{name}-10.17-raw.jpg'), frame)
             w._draw_ball_candidates(frame, [c for c in candidates if c['accepted']], (0,255,0), 'accepted', 2)

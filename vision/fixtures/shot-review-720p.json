@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "sourceVideo": "test-online-720p-15fps.mp4",
+  "video": {"width": 1280, "height": 720, "fps": 15},
+  "analysisId": "eca35d0d-32ae-4f49-ab71-ea1c4c59fbbd",
+  "coverage": "partial; unannotated intervals are not negative examples",
+  "shots": [
+    {
+      "id": "shot-001",
+      "startSeconds": 7,
+      "endSeconds": 8,
+      "timing": "approximate user-provided interval",
+      "outcome": "missed",
+      "teamId": null,
+      "annotationSource": "user",
+      "note": "Tiro non segnato, toccato tabellone esterno.",
+      "visualReview": {
+        "sampleFrameIndices": [105, 110, 118, 125],
+        "cameraMotion": true,
+        "rimVisibleThroughout": false,
+        "fixedRimCalibrationSuitable": false
+      },
+      "acceptedBallTimestampsNearEvent": [7.867, 7.933, 8.0, 8.067],
+      "evaluationStatus": "requires camera-aware rim calibration; not evaluated with fixed-rim detector"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import cv2
 import psycopg
 import torch
 from ultralytics import YOLO
+from camera_motion import CameraMotion
 
 DSN = os.getenv("DATABASE_URL", "postgresql://basketvision:basketvision@db:5432/basketvision")
 ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "vision").lower()
@@ -38,6 +39,10 @@ BALL_TRACK_MAX_SPEED_PX_PER_SECOND = max(50.0, float(os.getenv("BALL_TRACK_MAX_S
 BALL_TRACK_MIN_HITS = max(3, int(os.getenv("BALL_TRACK_MIN_HITS", "3")))
 BALL_TRACK_MAX_MISSES = max(1, int(os.getenv("BALL_TRACK_MAX_MISSES", "6")))
 BALL_TRACK_MAX_WEAK_UPDATES = max(0, int(os.getenv("BALL_TRACK_MAX_WEAK_UPDATES", "6")))
+BALL_TRACK_TEMPORAL_WINDOW = os.getenv("BALL_TRACK_TEMPORAL_WINDOW", "false").lower() in {"1", "true", "yes", "on"}
+BALL_CAMERA_MOTION_FILTER = os.getenv("BALL_CAMERA_MOTION_FILTER", "false").lower() in {"1", "true", "yes", "on"}
+BALL_TRACK_CONFIRM_WINDOW_SECONDS = max(0.05, float(os.getenv("BALL_TRACK_CONFIRM_WINDOW_SECONDS", "0.2")))
+BALL_TRACK_RECOVERY_SECONDS = max(0.0, float(os.getenv("BALL_TRACK_RECOVERY_SECONDS", "0.1")))
 BALL_ACCEPTED_MIN_SCORE = max(0.001, float(os.getenv("BALL_ACCEPTED_MIN_SCORE", "0.025")))
 BALL_TRACK_UPDATE_MIN_SCORE = max(0.001, float(os.getenv("BALL_TRACK_UPDATE_MIN_SCORE", "0.018")))
 BALL_TRACK_NEW_MIN_SCORE = max(BALL_TRACK_UPDATE_MIN_SCORE, float(os.getenv("BALL_TRACK_NEW_MIN_SCORE", "0.080")))
@@ -426,6 +431,8 @@ class BallTracker:
                 restored_track.setdefault("firstTimestamp", float(restored_track.get("lastTimestamp", 0.0)))
                 restored_track.setdefault("pathLength", 0.0)
                 restored_track.setdefault("state", "confirmed" if points >= BALL_TRACK_MIN_HITS else "tentative")
+                # Old checkpoints have no strong-hit history; never invent evidence.
+                restored_track.setdefault("strongHitTimestamps", [])
                 restored[tid] = restored_track
                 if restored_track["state"] == "confirmed":
                     self.confirmed_track_ids.add(tid)
@@ -459,7 +466,7 @@ class BallTracker:
         dt = max(0.0, timestamp - float(track["lastTimestamp"]))
         return float(track["x"]) + float(track["vx"]) * dt, float(track["y"]) + float(track["vy"]) * dt
 
-    def update(self, detections, timestamp):
+    def update(self, detections, timestamp, camera_motion=None):
         expired = [tid for tid, track in self.tracks.items()
                    if timestamp - float(track["lastTimestamp"]) > BALL_TRACK_MAX_GAP_SECONDS]
         for tid in expired:
@@ -471,6 +478,25 @@ class BallTracker:
         possible = []
         for tid in available_tracks:
             track = self.tracks[tid]
+            if BALL_CAMERA_MOTION_FILTER:
+                history = track.get("sceneHistory", [])
+                if (not camera_motion or camera_motion.get("toTimestamp") != timestamp
+                        or track.get("sceneTimestamp") != camera_motion.get("fromTimestamp")):
+                    history = []
+                else:
+                    matrix = camera_motion["matrix"]
+                    for point in history:
+                        x, y = point["x"], point["y"]
+                        point["x"] = matrix[0][0]*x + matrix[0][1]*y + matrix[0][2]
+                        point["y"] = matrix[1][0]*x + matrix[1][1]*y + matrix[1][2]
+                track["sceneHistory"] = [p for p in history if timestamp-p["timestamp"] <= .3]
+                track["sceneTimestamp"] = timestamp
+            track["strongHitTimestamps"] = [t for t in track.get("strongHitTimestamps", [])
+                                            if 0 <= timestamp - t <= BALL_TRACK_CONFIRM_WINDOW_SECONDS]
+            if (BALL_TRACK_TEMPORAL_WINDOW and track["state"] == "confirmed"
+                    and timestamp - float(track["lastTimestamp"]) > BALL_TRACK_RECOVERY_SECONDS):
+                track["state"] = "lost"
+                track["strongHitTimestamps"] = []
             predicted_x, predicted_y = self._prediction(track, timestamp)
             dt = max(0.001, timestamp - float(track["lastTimestamp"]))
             max_distance = BALL_TRACK_BASE_DISTANCE_PX + BALL_TRACK_MAX_SPEED_PX_PER_SECOND * dt
@@ -482,8 +508,14 @@ class BallTracker:
                     continue
                 distance = math.hypot(float(detection["centerX"]) - predicted_x,
                                       float(detection["centerY"]) - predicted_y)
-                if distance <= max_distance:
-                    possible.append((distance / max_distance, distance, tid, index))
+                # Weak evidence may bridge a short gap, but must stay close to
+                # the prediction: the general speed gate grows too wide there.
+                association_distance = max_distance
+                if BALL_TRACK_TEMPORAL_WINDOW and is_weak:
+                    ball_size = max(float(detection["width"]), float(detection["height"]))
+                    association_distance = min(max_distance, BALL_TRACK_BASE_DISTANCE_PX, max(8.0, ball_size))
+                if distance <= association_distance:
+                    possible.append((distance / association_distance, distance, tid, index))
 
         for _, distance, tid, index in sorted(possible):
             if tid not in available_tracks or index not in available_detections:
@@ -510,14 +542,20 @@ class BallTracker:
             track["hits"] = int(track.get("hits", 0)) + 1
             track["consecutiveHits"] = int(track.get("consecutiveHits", 0)) + 1
             track["misses"] = 0
-            if track["hits"] >= BALL_TRACK_MIN_HITS and track["consecutiveHits"] >= BALL_TRACK_MIN_HITS:
+            is_weak_update = (float(detection["qualityScore"]) < BALL_TRACK_NEW_MIN_SCORE
+                              or float(detection["confidence"]) < BALL_TRACK_NEW_MIN_CONFIDENCE)
+            if not is_weak_update and timestamp not in track["strongHitTimestamps"]:
+                track["strongHitTimestamps"].append(timestamp)
+                track["strongHitTimestamps"] = track["strongHitTimestamps"][-BALL_TRACK_MIN_HITS:]
+            confirmed = (len(track["strongHitTimestamps"]) >= BALL_TRACK_MIN_HITS
+                         if BALL_TRACK_TEMPORAL_WINDOW else
+                         track["hits"] >= BALL_TRACK_MIN_HITS and track["consecutiveHits"] >= BALL_TRACK_MIN_HITS)
+            if confirmed:
                 track["state"] = "confirmed"
                 self.confirmed_track_ids.add(tid)
             elif track.get("state") == "lost":
                 track["state"] = "tentative"
             detection["predictionErrorPx"] = round(prediction_error, 2)
-            is_weak_update = (float(detection["qualityScore"]) < BALL_TRACK_NEW_MIN_SCORE
-                              or float(detection["confidence"]) < BALL_TRACK_NEW_MIN_CONFIDENCE)
             if is_weak_update:
                 self.weak_track_updates += 1
             track["consecutiveWeakHits"] = int(track.get("consecutiveWeakHits", 0)) + 1 if is_weak_update else 0
@@ -528,7 +566,10 @@ class BallTracker:
             track = self.tracks[tid]
             track["misses"] = int(track.get("misses", 0)) + 1
             track["consecutiveHits"] = 0
-            if track["state"] == "confirmed" or track["misses"] >= BALL_TRACK_MAX_MISSES:
+            if ((not BALL_TRACK_TEMPORAL_WINDOW and track["state"] == "confirmed")
+                    or track["misses"] >= BALL_TRACK_MAX_MISSES):
+                if track["state"] == "confirmed":
+                    track["strongHitTimestamps"] = []
                 track["state"] = "lost"
 
         for index in available_detections:
@@ -549,6 +590,7 @@ class BallTracker:
                 "firstX": detection["centerX"], "firstY": detection["centerY"],
                 "firstTimestamp": timestamp, "lastTimestamp": timestamp,
                 "hits": 1, "consecutiveHits": 1, "misses": 0, "pathLength": 0.0,
+                "strongHitTimestamps": [timestamp],
                 "consecutiveWeakHits": 0,
                 "state": "tentative",
             }
@@ -559,6 +601,26 @@ class BallTracker:
         return detections
 
     def _decorate_detection(self, detection, tid, track, timestamp, is_new):
+        scene_state = "unavailable"
+        if BALL_CAMERA_MOTION_FILTER:
+            history = track.get("sceneHistory", [])
+            size = max(float(detection["width"]), float(detection["height"]))
+            if len(history) >= 3 and timestamp-history[0]["timestamp"] >= .1 - 1e-6:
+                residual = max(math.hypot(detection["centerX"]-p["x"], detection["centerY"]-p["y"]) for p in history)
+                camera_shift = math.hypot(history[0]["x"]-history[0]["originalX"],
+                                          history[0]["y"]-history[0]["originalY"])
+                scene_state = ("background_consistent" if residual <= max(2.0, .35*size)
+                               and camera_shift >= .5*size else "independent_or_stationary_camera")
+                detection["sceneResidualPx"] = round(residual, 3)
+                detection["sceneCameraShiftPx"] = round(camera_shift, 3)
+            detection["sceneMotionState"] = scene_state
+            # A real ball may be resting on the sideline. Camera consistency is
+            # evidence against shot motion, not against the object's identity.
+            detection["shotMotionEligible"] = scene_state != "background_consistent"
+            history.append({"timestamp": timestamp, "x": detection["centerX"], "y": detection["centerY"],
+                            "originalX": detection["centerX"], "originalY": detection["centerY"]})
+            track["sceneHistory"] = history[-20:]
+            track["sceneTimestamp"] = timestamp
         duration = max(0.001, timestamp - float(track["firstTimestamp"]))
         average_speed = float(track.get("pathLength", 0.0)) / duration
         is_static = int(track["hits"]) >= BALL_STATIC_MIN_HITS and average_speed < BALL_STATIC_MAX_SPEED_PX_PER_SECOND
@@ -658,6 +720,7 @@ def process_vision(job_id, game_id, video_path):
     debug_frames = checkpoint.get("debugFrames", [])
     last_debug_timestamp = float(checkpoint.get("lastDebugTimestamp", -1e9))
     tracker = BallTracker()
+    camera_motion = CameraMotion()
     tracker.restore(checkpoint.get("ballTrackerTracks", checkpoint.get("ballLinkerTracks", {})))
     tracker.restore_confirmed_ids(checkpoint.get("confirmedBallTrackIds", []))
     tracker.restore_static_ids(checkpoint.get("staticBallTrackIds", []))
@@ -753,7 +816,8 @@ def process_vision(job_id, game_id, video_path):
                     if candidate["qualityScore"] < BALL_TRACK_UPDATE_MIN_SCORE:
                         candidate["rejectionReason"] = "score_below_track_update_threshold"
                 rejected_ball_candidates += len(candidates) - len(trackable)
-                tracked = tracker.update(trackable, timestamp)
+                tracked = tracker.update(trackable, timestamp, camera_motion.update(frame, timestamp)
+                                         if BALL_CAMERA_MOTION_FILTER else None)
                 accepted = [candidate for candidate in tracked if candidate["accepted"]]
                 rejected_ball_candidates += len(tracked) - len(accepted)
                 rejected = [candidate for candidate in candidates if not candidate["accepted"]]
@@ -873,6 +937,10 @@ def process_vision(job_id, game_id, video_path):
             "ballTrackMinHits": BALL_TRACK_MIN_HITS,
             "ballTrackMaxMisses": BALL_TRACK_MAX_MISSES,
             "ballTrackMaxWeakUpdates": BALL_TRACK_MAX_WEAK_UPDATES,
+            "ballTrackTemporalWindow": BALL_TRACK_TEMPORAL_WINDOW,
+            "ballCameraMotionFilter": BALL_CAMERA_MOTION_FILTER,
+            "ballTrackConfirmWindowSeconds": BALL_TRACK_CONFIRM_WINDOW_SECONDS,
+            "ballTrackRecoverySeconds": BALL_TRACK_RECOVERY_SECONDS,
             "ballAcceptedMinScore": BALL_ACCEPTED_MIN_SCORE,
             "ballTrackUpdateMinScore": BALL_TRACK_UPDATE_MIN_SCORE,
             "ballTrackNewMinScore": BALL_TRACK_NEW_MIN_SCORE,

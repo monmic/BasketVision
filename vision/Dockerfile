@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir lap==0.5.13
 COPY worker.py .
+COPY camera_motion.py .
 COPY person_tracker_diagnostic.yaml .
 
 CMD ["python", "worker.py"]

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "sourceVideoLabel": "Home vs Away",
+  "sourceVideo": "storage/videos/35b68704-541f-4c6d-b8ab-45228266102a.mp4",
+  "gameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+  "analysisId": "a0dca029-f7a0-4819-90b0-603cff2bfe32",
+  "coverage": "partial; unannotated intervals are not negative examples",
+  "timestampFormat": "mm:ss",
+  "annotationSource": "user",
+  "shots": [
+    {
+      "id": "shot-001",
+      "timestamp": "7:14",
+      "timestampSeconds": 434,
+      "shotType": "three_point",
+      "outcome": "missed",
+      "contact": "rim",
+      "teamId": null,
+      "note": "tiro da 3 punti, ferro, sbagliato"
+    },
+    {
+      "id": "shot-002",
+      "timestamp": "7:21",
+      "timestampSeconds": 441,
+      "shotType": "three_point",
+      "outcome": "missed",
+      "contact": "net",
+      "airball": true,
+      "teamId": null,
+      "note": "tiro da 3 punti, airball con tocco retina, sbagliato"
+    },
+    {
+      "id": "shot-003",
+      "timestamp": "7:30",
+      "timestampSeconds": 450,
+      "shotType": "inside_paint",
+      "outcome": "missed",
+      "contact": "rim",
+      "teamId": null,
+      "note": "tiro da dentro l'area, ferro, sbagliato"
+    },
+    {
+      "id": "shot-004",
+      "timestamp": "7:36",
+      "timestampSeconds": 456,
+      "shotType": "three_point",
+      "outcome": "missed",
+      "contact": "rim",
+      "teamId": null,
+      "note": "tiro da 3 punti, ferro, sbagliato"
+    },
+    {
+      "id": "shot-005",
+      "timestamp": "7:53",
+      "timestampSeconds": 473,
+      "shotType": "inside_paint",
+      "outcome": "made",
+      "contact": null,
+      "teamId": null,
+      "note": "tiro da dentro l'area, segnato"
+    }
+  ]
+}

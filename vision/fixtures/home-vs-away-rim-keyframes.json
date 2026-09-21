@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "gameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+  "video": {"width": 854, "height": 480},
+  "annotationSource": "assistant manual review of original-resolution shot contact sheets",
+  "notice": "Approximate rim centre and width in original pixels. Linear interpolation between reviewed frames only. No extrapolation; no automatic made/missed labels.",
+  "episodes": [
+    {"shotId": "shot-001", "keyframes": [[433,259,174,26],[434,259,174,26],[435,257,174,26],[436,256,174,26]]},
+    {"shotId": "shot-002", "keyframes": [[440,257,174,26],[441,256,174,26],[442,257,174,26],[443,257,174,26]]},
+    {"shotId": "shot-003", "keyframes": [[449,614,175,26],[450,594,175,26],[451,586,175,26],[452,586,175,26]]},
+    {"shotId": "shot-004", "keyframes": [[455,117,181,26],[456,380,178,26],[457,402,174,26],[458,410,174,26]]},
+    {"shotId": "shot-005", "keyframes": [[472,355,178,26],[473,392,174,26],[474,403,174,26],[475,408,174,26]]}
+  ]
+}
