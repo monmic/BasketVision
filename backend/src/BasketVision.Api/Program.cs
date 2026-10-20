@@ -192,6 +192,10 @@ app.MapGet("/api/games/{id:guid}/events", async (Guid id, BasketVisionDbContext 
     return Results.Ok(events);
 });
 
+app.MapPost("/api/games/{id:guid}/shots", ShotReviews.Create);
+app.MapGet("/api/games/{id:guid}/report.csv", ReportExport.Download);
+app.MapPut("/api/games/{id:guid}/shots/{eventId:guid}", ShotReviews.Update);
+
 app.MapGet("/api/games/{id:guid}/report", async (Guid id, BasketVisionDbContext db, AccessService access, ICurrentUser user) =>
 {
     var game = await db.Games.Include(x => x.Teams).SingleOrDefaultAsync(x => x.Id == id);
@@ -200,21 +204,22 @@ app.MapGet("/api/games/{id:guid}/report", async (Guid id, BasketVisionDbContext 
     if (denial != null) return AccessService.Denied(denial);
     var events = await db.GameEvents.Where(x => x.GameId == id).OrderBy(x => x.VideoTimestamp).ToListAsync();
 
+    var countedEvents = events.Where(e => e.Status is DetectionStatus.Confirmed or DetectionStatus.Corrected).ToList();
     var stats = game.Teams.Select(team => new TeamStatDto(team.Id, team.Name, new Dictionary<string, int>
     {
-        ["ShotMade"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.ShotMade),
-        ["ShotMissed"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.ShotMissed),
+        ["ShotMade"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.ShotMade),
+        ["ShotMissed"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.ShotMissed),
         ["OffensiveRebound"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.OffensiveRebound),
         ["DefensiveRebound"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.DefensiveRebound),
         ["Turnover"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Turnover),
         ["Steal"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Steal),
         ["Assist"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Assist),
         ["Block"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Block)
-    })).ToList();
+    }, ShotReviews.Shooting(events, team.Id))).ToList();
 
     var eventDtos = events.Select(e => new GameEventDto(e.Id, e.Type,
         game.Teams.FirstOrDefault(t => t.Id == e.TeamId)?.Name,
-        e.VideoTimestamp, e.Confidence, e.Status)).ToList();
+        e.VideoTimestamp, e.Confidence, e.Status, e.TeamId, e.AnalysisJobId, ShotReviews.Value(e))).ToList();
 
     return Results.Ok(new ReportDto(game.Id, game.Name, stats, eventDtos));
 });

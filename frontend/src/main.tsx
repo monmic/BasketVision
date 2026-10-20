@@ -3,10 +3,12 @@ import {createRoot, hydrateRoot} from 'react-dom/client';
 import './style.css';
 import './landing.css';
 import {AdminDashboard} from './AdminDashboard';
+import {ExportReport} from './ExportReport';
+import {ShotReview,eventLabels,type ReviewEvent} from './ShotReview';
 
 import {API, apiFetch as fetch, Session, AccountPanel, errorMessage, type Me} from './auth';
 type Game = {id:string,name:string,teams:{id:string,name:string,side:string}[],videoPath?:string};
-type Report = {gameId:string,gameName:string,teams:{teamId:string,teamName:string,stats:Record<string,number>}[],events:{id:string,type:string,team?:string,videoTimestamp:number,confidence:number,status:string}[]};
+type Report = {gameId:string,gameName:string,teams:{teamId:string,teamName:string,stats:Record<string,number>,shooting?:{points:number,unspecified:number,categories:{value:number,made:number,attempted:number,percentage:number|null}[]}}[],events:ReviewEvent[]};
 type AnalysisStatus = 'Pending'|'Processing'|'Completed'|'Failed'|'Paused';
 type AnalysisJob = {analysisId:string,gameId:string,status:AnalysisStatus,progress:number,error?:string|null,startSeconds?:number,endSeconds?:number|null};
 type ActiveAnalysis = AnalysisJob & {gameName:string,createdAtUtc:string};
@@ -222,7 +224,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
  }
 
  function seek(ts:number){
-   if(video.current){video.current.currentTime=Math.max(0,ts-4);video.current.play()}
+   if(video.current){video.current.pause();video.current.currentTime=Math.max(0,ts)}
  }
 
  function selectRim(e:React.MouseEvent<HTMLVideoElement>){
@@ -266,6 +268,8 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
 
    {game.videoPath&&<video ref={video} controls={!calibratingRim} className={calibratingRim?'rim-calibration-active':''} onClick={selectRim} src={`${API}/api/games/${game.id}/video`}/>}</section>
 
+   {report&&game&&<><ExportReport key={`export-${game.id}`} gameId={game.id}/><ShotReview key={game.id} gameId={game.id} teams={game.teams} events={report.events} analysisId={job?.status==='Completed'?job.analysisId:undefined} currentTime={()=>video.current?.currentTime??0} seek={seek} reload={async()=>{const r=await fetch(`${API}/api/games/${game.id}/report`);if(r.ok)setReport(await r.json())}}/></>}
+   {report&&<section className="card"><h2>Punti e percentuali</h2><p>Conteggi dei tiri confermati e classificati. I tiri da specificare sono esclusi dai punti e dalle percentuali per categoria.</p>{report.teams.map(t=><div key={t.teamId}><h3>{t.teamName}: {t.shooting?.points??0} punti</h3><p>Tiri con valore da specificare: {t.shooting?.unspecified??0}</p><table><thead><tr><th>Tipo</th><th>Segnati / Tentati</th><th>Percentuale</th></tr></thead><tbody>{t.shooting?.categories.map(c=><tr key={c.value}><td>{c.value===1?'Liberi':`Da ${c.value} punti`}</td><td>{c.made} / {c.attempted}</td><td>{c.percentage==null?'—':`${c.percentage.toFixed(1)}%`}</td></tr>)}</tbody></table></div>)}</section>}
    {vision&&<section className="card">
      <h2>Vision debug — {vision.mode==='vision-cv02.4'?'CV-02.4':vision.mode==='vision-cv02.3'?'CV-02.3':vision.mode==='vision-cv02.2'?'CV-02.2':vision.mode==='vision-cv02.1'?'CV-02.1':'CV-02'}</h2>
      <p><b>Person model:</b> {vision.model} · <b>Ball model:</b> {vision.ballModel??vision.model} · <b>Video:</b> {vision.video.width}×{vision.video.height} @ {vision.video.fps.toFixed(1)} fps · <b>Durata:</b> {vision.video.durationSeconds.toFixed(1)}s · <b>Intervallo:</b> {formatVideoTime(vision.video.analysisStartSeconds??0)} → {vision.video.analysisEndSeconds==null?'fine':formatVideoTime(vision.video.analysisEndSeconds)}</p>
@@ -278,7 +282,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
      <h3>Prime detection accettate</h3>{vision.ballTrack.length===0?<p>Nessuna detection accettata: verificare soglie soft o usare un detector basket-specifico.</p>:<div className="events">{vision.ballTrack.slice(0,150).map((p,i)=><button className="event" title={p.acceptanceReason??p.rejectionReason} key={`${p.timestamp}-${i}`} onClick={()=>seek(p.timestamp)}><b>{p.timestamp.toFixed(2)}s</b><span>{p.source??'ball'}</span><span>track {p.trackId??'-'} · {p.trackState??'legacy'}</span><small>{Math.round(p.confidence*100)}%</small></button>)}</div>}
    </section>}
 
-   {report&&<section className="grid"><div className="card"><h2>Statistiche eventi</h2><p>I candidati di tiro restano separati dalle statistiche finché non vengono classificati e attribuiti a una squadra.</p><table><thead><tr><th>Stat</th>{report.teams.map(t=><th key={t.teamId}>{t.teamName}</th>)}</tr></thead><tbody>{Object.keys(report.teams[0]?.stats??{}).map(k=><tr key={k}><td>{k}</td>{report.teams.map(t=><td key={t.teamId}>{t.stats[k]??0}</td>)}</tr>)}</tbody></table></div><div className="card"><h2>Eventi e candidati</h2><div className="events">{report.events.map(ev=><button className={`event ${ev.type==='ShotCandidate'?'shot-candidate':''}`} key={ev.id} onClick={()=>seek(ev.videoTimestamp)}><b>{ev.videoTimestamp.toFixed(1)}s</b><span>{ev.team??(ev.type==='ShotCandidate'?'Da attribuire':'-')}</span><span>{ev.type==='ShotCandidate'?'Candidato di tiro':ev.type}</span><small>{Math.round(ev.confidence*100)}%</small></button>)}</div></div></section>}</>}
+   {report&&<section className="grid"><div className="card"><h2>Statistiche eventi</h2><p>I candidati di tiro restano separati dalle statistiche finché non vengono classificati e attribuiti a una squadra.</p><table><thead><tr><th>Stat</th>{report.teams.map(t=><th key={t.teamId}>{t.teamName}</th>)}</tr></thead><tbody>{Object.keys(report.teams[0]?.stats??{}).map(k=><tr key={k}><td>{eventLabels[k]??k}</td>{report.teams.map(t=><td key={t.teamId}>{t.stats[k]??0}</td>)}</tr>)}</tbody></table></div><div className="card"><h2>Eventi e candidati</h2><div className="events">{report.events.map(ev=><button className={`event ${ev.type==='ShotCandidate'?'shot-candidate':''}`} key={ev.id} onClick={()=>seek(ev.videoTimestamp)}><b>{ev.videoTimestamp.toFixed(1)}s</b><span>{ev.team??(ev.type==='ShotCandidate'?'Da attribuire':'-')}</span><span>{eventLabels[ev.type]??ev.type}</span><small>{Math.round(ev.confidence*100)}%</small></button>)}</div></div></section>}</>}
  </main>
 }
 const root=document.getElementById('root')!;

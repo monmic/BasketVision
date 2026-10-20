@@ -29,6 +29,24 @@ class Rim:
             raise ValueError("Invalid rim geometry or calibration interval")
 
 
+def motion_windows(track, rim_width):
+    """Inspect up to 500ms; validate every intermediate observation."""
+    for end in range(2, len(track)):
+        for start in range(end - 2, -1, -1):
+            window = track[start:end + 1]
+            if window[-1][0] - window[0][0] > .500001:
+                break
+            pairs = list(zip(window, window[1:]))
+            if any(not (0 < q[0]-p[0] <= .25)
+                   or math.hypot(q[1]-p[1], q[2]-p[2]) / (q[0]-p[0]) > 30*rim_width
+                   for p, q in pairs):
+                break
+            if not (all(q[2] > p[2] for p, q in pairs)
+                    or all(q[2] < p[2] for p, q in pairs)):
+                break
+            yield window[0], window[len(window)//2], window[-1]
+
+
 def detect_shot_candidates(points, rim, video_width, video_height):
     """Find a short rising approach to the rim or descending passage near it.
 
@@ -65,7 +83,7 @@ def detect_shot_candidates(points, rim, video_width, video_height):
         for p in track:
             by_time[p[0]].append(p)
         track = [items[0] for _, items in sorted(by_time.items()) if len(items) == 1]
-        for a, b, c in zip(track, track[1:], track[2:]):
+        for a, b, c in motion_windows(track, rim.width):
             # Excluded scene motion breaks evidence; do not join observations
             # across a camera-consistent interval after removing its points.
             excluded_index = bisect_left(excluded, a[0])
@@ -74,8 +92,7 @@ def detect_shot_candidates(points, rim, video_width, video_height):
             # A fixed minimum span rejects every consecutive triplet at 30 fps
             # (67 ms) and above. Spatial displacement and speed checks below
             # supply the motion evidence independently of sampling frequency.
-            if not (0 < b[0]-a[0] <= .25 and 0 < c[0]-b[0] <= .25):
-                continue
+            # Continuity and speed were checked on every original sample.
             # Reject implausible association jumps (in rim widths per second).
             if any(math.hypot(q[1]-p[1], q[2]-p[2]) / (q[0]-p[0]) > 30*rim.width
                    for p, q in ((a, b), (b, c))):

@@ -26,7 +26,24 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             ["Auth:SigningKey"] = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48)),
             ["Auth:SecureCookies"] = "false", ["Storage:Root"] = Storage
         }));
-        builder.ConfigureServices(s => { s.RemoveAll<IVideoProbe>(); s.AddSingleton<IVideoProbe, FakeProbe>(); });
+        builder.ConfigureServices(s => {
+            s.RemoveAll<IVideoProbe>(); s.AddSingleton<IVideoProbe, FakeProbe>();
+            // Functional tests share one loopback IP; do not exhaust the production login quota.
+            s.AddSingleton<IStartupFilter, TestClientAddress>();
+        });
+    }
+    private sealed class TestClientAddress : IStartupFilter
+    {
+        private static int nextAddress;
+        public Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> Configure(Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> next) => app =>
+        {
+            Microsoft.AspNetCore.Builder.UseExtensions.Use(app, async (context, nextRequest) =>
+            {
+                context.Connection.RemoteIpAddress = new IPAddress((long)Interlocked.Increment(ref nextAddress));
+                await nextRequest();
+            });
+            next(app);
+        };
     }
     private sealed class FakeProbe : IVideoProbe { public Task<double> Duration(string path, CancellationToken cancellationToken = default) => Task.FromResult(3600d); }
 }
@@ -166,6 +183,41 @@ public sealed class AuthorizationTests(ApiFactory factory) : IClassFixture<ApiFa
         Assert.Equal(HttpStatusCode.Forbidden,(await a.Client.GetAsync("/api/admin/users")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,(await a.Client.GetAsync($"/api/games/{a.GameId}/report")).StatusCode);
     }
+    [Fact] public async Task Reviewed_shots_update_statistics_and_reject_foreign_teams()
+    {
+        var a = await Account(true);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BasketVisionDbContext>();
+        var team = new Team { GameId = a.GameId, Name = "Home", Side = TeamSide.A };
+        var job = new AnalysisJob { GameId = a.GameId, Status = AnalysisStatus.Completed };
+        db.Teams.Add(team); db.AnalysisJobs.Add(job); await db.SaveChangesAsync();
+        var path = $"/api/games/{a.GameId}/shots";
+        object Body(Guid? teamId, string type, string status) => new { analysisJobId = job.Id, teamId, videoTimestamp = 435, type, status, shotValue = 3 };
+        Assert.Equal(HttpStatusCode.BadRequest, (await a.Client.PostAsJsonAsync(path, Body(Guid.NewGuid(), "ShotMade", "Confirmed"))).StatusCode);
+        var created = await a.Client.PostAsJsonAsync(path, Body(team.Id, "ShotMade", "Confirmed"));
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var eventId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report");
+        Assert.Equal(1, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMade").GetInt32());
+        Assert.Equal(3, report.GetProperty("teams")[0].GetProperty("shooting").GetProperty("points").GetInt32());
+        Assert.Equal(3, report.GetProperty("events")[0].GetProperty("shotValue").GetInt32());
+        var export = await a.Client.GetAsync($"/api/games/{a.GameId}/report.csv");
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        Assert.Equal("text/csv", export.Content.Headers.ContentType?.MediaType);
+        Assert.Contains(".csv", export.Content.Headers.ContentDisposition?.FileNameStar ?? "");
+        Assert.Contains("\"Home\";\"3\";\"0\";\"Da 3\"", await export.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, (await a.Client.PutAsJsonAsync(path + "/" + eventId, Body(team.Id, "ShotMissed", "Corrected"))).StatusCode);
+        report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report");
+        Assert.Equal(0, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMade").GetInt32());
+        Assert.Equal(1, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMissed").GetInt32());
+        Assert.Equal(HttpStatusCode.OK, (await a.Client.PutAsJsonAsync(path + "/" + eventId, Body(team.Id, "ShotMissed", "Rejected"))).StatusCode);
+        report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report");
+        Assert.Equal(0, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMissed").GetInt32());
+        var other = await Account();
+        Assert.Equal(HttpStatusCode.NotFound, (await other.Client.GetAsync($"/api/games/{a.GameId}/report.csv")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await other.Client.PutAsJsonAsync(path + "/" + eventId, Body(team.Id, "ShotMade", "Confirmed"))).StatusCode);
+    }
+
     private static async Task AssertLimit(HttpResponseMessage response,string feature)
     {
         Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);

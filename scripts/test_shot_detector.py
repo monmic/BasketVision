@@ -40,6 +40,18 @@ class ShotDetectorTests(unittest.TestCase):
                        self.points([200, 203, 205]), self.points([240, 210, 225])):
             self.assertEqual(self.detect(points), [])
 
+    def test_dense_motion_accumulates_displacement_without_bridging_gaps(self):
+        points = self.points([170+i*3 for i in range(12)],
+                             [1+i/30 for i in range(12)])
+        self.assertEqual(len(self.detect(points)), 1)
+        broken = [dict(p) for p in points]
+        for p in broken[6:]:
+            p['timestamp'] += .3
+        self.assertEqual(self.detect(broken), [])
+        jitter = self.points([190,193,191,194,192,195,193,196,194,197,195,198],
+                             [1+i/30 for i in range(12)])
+        self.assertEqual(self.detect(jitter), [])
+
     def test_gaps_ids_and_duplicate_timestamps_cannot_supply_evidence(self):
         self.assertEqual(self.detect(self.points([260, 235, 215], (1, 2, 3))), [])
         points = self.points([260, 235, 215])
