@@ -72,6 +72,31 @@ public sealed class AuthorizationTests(ApiFactory factory) : IClassFixture<ApiFa
         var me = await a.Client.GetFromJsonAsync<JsonElement>("/auth/me");
         Assert.Equal(1, me.GetProperty("usage").GetProperty("analysesStarted").GetInt32());
     }
+    [Fact] public async Task Shot_candidate_calibration_must_stay_inside_analysis_range()
+    {
+        var a = await Account();
+        var invalid = await a.Client.PostAsJsonAsync($"/api/games/{a.GameId}/analysis", new
+        {
+            startSeconds = 10,
+            endSeconds = 20,
+            shotCandidates = new { enabled = true, rim = new { x = 500, y = 200, width = 40, startSeconds = 9, endSeconds = 20 } }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var error = await invalid.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("INVALID_RIM_CALIBRATION", error.GetProperty("code").GetString());
+
+        var valid = await a.Client.PostAsJsonAsync($"/api/games/{a.GameId}/analysis", new
+        {
+            startSeconds = 10,
+            endSeconds = 20,
+            shotCandidates = new { enabled = true, rim = new { x = 500, y = 200, width = 40, startSeconds = 10, endSeconds = 20 } }
+        });
+        Assert.Equal(HttpStatusCode.Accepted, valid.StatusCode);
+        var accepted = await valid.Content.ReadFromJsonAsync<JsonElement>();
+        var request = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(factory.Storage, "analysis", accepted.GetProperty("analysisId").GetGuid() + ".request.json")));
+        Assert.True(request.RootElement.GetProperty("shotCandidates").GetProperty("enabled").GetBoolean());
+        Assert.Equal(500, request.RootElement.GetProperty("shotCandidates").GetProperty("rim").GetProperty("x").GetDouble());
+    }
     [Fact] public async Task Monthly_quota_survives_job_deletion()
     {
         var a = await Account();

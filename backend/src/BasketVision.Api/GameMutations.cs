@@ -74,6 +74,17 @@ public static class GameMutations
         if (!double.IsFinite(start) || !double.IsFinite(end) || start < 0 || start >= duration || end <= start || end > duration + 0.1)
             return Results.BadRequest(new { code = "INVALID_ANALYSIS_RANGE", message = "DA e A devono essere compresi nella durata del video, con A maggiore di DA." });
         end = Math.Min(end, duration);
+        var shotCandidates = req?.ShotCandidates;
+        if (shotCandidates?.Enabled == true)
+        {
+            var rim = shotCandidates.Rim;
+            if (rim is null
+                || !double.IsFinite(rim.X) || !double.IsFinite(rim.Y) || !double.IsFinite(rim.Width)
+                || !double.IsFinite(rim.StartSeconds) || !double.IsFinite(rim.EndSeconds)
+                || rim.X < 0 || rim.Y < 0 || rim.Width <= 0
+                || rim.StartSeconds < start || rim.EndSeconds > end || rim.EndSeconds <= rim.StartSeconds)
+                return Results.BadRequest(new { code = "INVALID_RIM_CALIBRATION", message = "La calibrazione del ferro deve essere valida e compresa nell'intervallo di analisi." });
+        }
         var minutes = (end - start) / 60;
         var error = await access.AuthorizeJob(ownerId, minutes, isNew: true);
         if (error != null) return AccessService.Denied(error);
@@ -82,7 +93,16 @@ public static class GameMutations
         var committed = false;
         try
         {
-            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { startSeconds = start, endSeconds = end }));
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new
+            {
+                startSeconds = start,
+                endSeconds = end,
+                shotCandidates = shotCandidates?.Enabled == true ? new
+                {
+                    enabled = true,
+                    rim = shotCandidates.Rim
+                } : null
+            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
             db.AnalysisJobs.Add(job);
             db.UsageRecords.Add(new UsageRecord { UserId = ownerId, AnalysisJobId = job.Id, ReservedMinutes = minutes });
             await db.SaveChangesAsync(); await tx.CommitAsync(); committed = true;

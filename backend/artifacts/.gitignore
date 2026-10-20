@@ -1,0 +1,3 @@
+# Local image copies, training caches and model checkpoints.
+**/dataset/
+**/train/

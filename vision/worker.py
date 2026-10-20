@@ -12,6 +12,7 @@ import psycopg
 import torch
 from ultralytics import YOLO
 from camera_motion import CameraMotion
+from shot_detector import Rim, detect_shot_candidates
 
 DSN = os.getenv("DATABASE_URL", "postgresql://basketvision:basketvision@db:5432/basketvision")
 ANALYSIS_MODE = os.getenv("ANALYSIS_MODE", "vision").lower()
@@ -67,6 +68,7 @@ EVENT_TYPE_VALUES = {
     "Steal": 7,
     "Assist": 8,
     "Block": 9,
+    "ShotCandidate": 17,
 }
 
 _person_model = None
@@ -226,19 +228,56 @@ def process_mock(job_id, game_id):
     print(f"Completed mock analysis {job_id}", flush=True)
 
 
-def load_analysis_range(job_id):
+def load_analysis_request(job_id):
     request_path = ANALYSIS_DIR / f"{job_id}.request.json"
     if not request_path.exists():
-        return 0.0, None
+        return {"startSeconds": 0.0, "endSeconds": None, "shotCandidates": None}
     try:
         data = json.loads(request_path.read_text(encoding="utf-8"))
         start = max(0.0, float(data.get("startSeconds") or 0.0))
         raw_end = data.get("endSeconds")
         end = float(raw_end) if raw_end is not None else None
-        return start, end
+        return {"startSeconds": start, "endSeconds": end,
+                "shotCandidates": data.get("shotCandidates")}
     except Exception as exc:
         print(f"Invalid analysis range for {job_id}: {exc}; using full video", flush=True)
-        return 0.0, None
+        return {"startSeconds": 0.0, "endSeconds": None, "shotCandidates": None}
+
+
+def build_shot_candidates(request, ball_points, width, height):
+    options = request.get("shotCandidates")
+    if not isinstance(options, dict) or not options.get("enabled"):
+        return [], None
+    calibration = options.get("rim")
+    if not isinstance(calibration, dict):
+        raise ValueError("Shot candidates enabled without rim calibration")
+    rim = Rim(float(calibration["x"]), float(calibration["y"]), float(calibration["width"]),
+              float(calibration["startSeconds"]), float(calibration["endSeconds"]))
+    candidates = detect_shot_candidates(ball_points, rim, width, height)
+    return candidates, calibration
+
+
+def replace_shot_candidate_events(job_id, game_id, candidates, calibration):
+    with psycopg.connect(DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM "GameEvents" WHERE "AnalysisJobId" = %s AND "Type" = %s',
+                        (job_id, EVENT_TYPE_VALUES["ShotCandidate"]))
+            for candidate in candidates:
+                metadata = json.dumps({
+                    "source": "shot-detector-0.1",
+                    "reviewStatus": candidate["status"],
+                    "reason": candidate["reason"],
+                    "trackId": candidate["trackId"],
+                    "startSeconds": candidate["startSeconds"],
+                    "outcome": None,
+                    "calibration": calibration,
+                    "evidence": candidate["evidence"],
+                }, ensure_ascii=False, allow_nan=False)
+                cur.execute('''INSERT INTO "GameEvents" ("Id","GameId","AnalysisJobId","Type","TeamId","VideoTimestamp","EndTimestamp","Confidence","Status","MetadataJson")
+                    VALUES (%s,%s,%s,%s,NULL,%s,%s,%s,0,%s)''',
+                    (uuid.uuid4(), game_id, job_id, EVENT_TYPE_VALUES["ShotCandidate"],
+                     candidate["timestamp"], candidate["endSeconds"], candidate["confidence"], metadata))
+            conn.commit()
 
 
 def _extract_boxes(result, class_id, source, timestamp, x_offset=0.0, y_offset=0.0):
@@ -666,7 +705,9 @@ def process_vision(job_id, game_id, video_path):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     duration = total_frames / fps if fps > 0 else 0
-    start_seconds, requested_end_seconds = load_analysis_range(job_id)
+    analysis_request = load_analysis_request(job_id)
+    start_seconds = analysis_request["startSeconds"]
+    requested_end_seconds = analysis_request["endSeconds"]
     end_seconds = min(requested_end_seconds, duration) if requested_end_seconds is not None and duration > 0 else requested_end_seconds
     if duration > 0:
         start_seconds = min(start_seconds, duration)
@@ -909,6 +950,9 @@ def process_vision(job_id, game_id, video_path):
     analyzed_seconds = max(0.001, last_timestamp - start_seconds)
     detections_per_second = accepted_ball_detections / analyzed_seconds
 
+    shot_candidates, rim_calibration = build_shot_candidates(
+        analysis_request, ball_points, width, height)
+
     result = {
         "analysisId": str(job_id),
         "gameId": str(game_id),
@@ -999,8 +1043,11 @@ def process_vision(job_id, game_id, video_path):
             "medianBallConfidence": round(median_ball_confidence, 4),
             "ballDetectionsPerSecond": round(detections_per_second, 3),
             "storedBallPoints": len(ball_points),
+            "shotCandidates": len(shot_candidates),
         },
         "ballTrack": ball_points,
+        "shotCandidates": shot_candidates,
+        "shotCandidateCalibration": rim_calibration,
         "debugFrames": debug_frames,
     }
 
@@ -1008,6 +1055,7 @@ def process_vision(job_id, game_id, video_path):
     tmp_path = output_path.with_suffix(".json.tmp")
     tmp_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     tmp_path.replace(output_path)
+    replace_shot_candidate_events(job_id, game_id, shot_candidates, rim_calibration)
     delete_checkpoint(job_id)
 
     set_job(job_id, status=2, progress=100, completed=True)

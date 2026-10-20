@@ -1,0 +1,12 @@
+{
+  "source": "35b68704-541f-4c6d-b8ab-45228266102a.mp4",
+  "width": 854,
+  "height": 480,
+  "reviewer": "assistant_visual_review",
+  "method": "Approximate manual original-pixel bounds reviewed on unmarked nearest-neighbor enlargements. Existing primary-ball boxes remain unchanged.",
+  "limitation": "Targeted audit selected after inspecting unmatched predictions; not independent or exhaustive. Other unannotated balls may remain. Not ready as a complete training reference.",
+  "additions": [
+    {"frame": 13008, "boxesPixels": [[157,252,170,266]], "reason": "Additional ball on floor by left wall, outside the annotated primary ball."},
+    {"frame": 13014, "boxesPixels": [[157,252,170,266]], "reason": "Same additional wall-side floor ball in next reviewed frame."}
+  ]
+}

@@ -38,6 +38,7 @@ def detect_shot_candidates(points, rim, video_width, video_height):
     """
     rim.validate(video_width, video_height)
     tracks = defaultdict(list)
+    scores = defaultdict(lambda: defaultdict(list))
     excluded_times = defaultdict(list)
     for p in points:
         if p.get("shotMotionEligible") is False and p.get("trackId") is not None:
@@ -53,6 +54,8 @@ def detect_shot_candidates(points, rim, video_width, video_height):
         t, x, y = values
         if rim.start <= t <= rim.end and 0 <= x < video_width and 0 <= y < video_height:
             tracks[p["trackId"]].append((t, x, y))
+            score = p.get("acceptedScore", p.get("confidence", 0.0))
+            scores[p["trackId"]][t].append(float(score) if isinstance(score, (int, float)) and math.isfinite(score) else 0.0)
 
     candidates = []
     for track_id, track in tracks.items():
@@ -88,6 +91,7 @@ def detect_shot_candidates(points, rim, video_width, video_height):
                     "timestamp": c[0], "startSeconds": a[0], "endSeconds": c[0],
                     "trackId": track_id, "type": "ShotCandidate",
                     "status": "NeedsReview", "teamId": None, "outcome": None,
+                    "confidence": round(min(scores[track_id][p[0]][0] for p in (a, b, c)), 5),
                     "reason": "rising_rim_approach" if rising else "descending_near_rim",
                     "evidence": [{"timestamp": p[0], "x": p[1], "y": p[2]} for p in (a, b, c)],
                 })

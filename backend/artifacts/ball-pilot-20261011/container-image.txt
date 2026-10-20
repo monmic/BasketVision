@@ -1,0 +1,2 @@
+basketvision-worker:latest
+sha256:f9178a2ccc9cdd4e5909bfc3e939ef2a698d1c4388c7001c818c062ed10349c0

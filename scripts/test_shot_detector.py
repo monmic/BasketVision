@@ -15,11 +15,15 @@ class ShotDetectorTests(unittest.TestCase):
         return detect_shot_candidates(points, Rim(500, 200, 40, 0, 5), 1280, 720)
 
     def test_rising_candidate_has_no_result_or_team(self):
-        result = self.detect(self.points([260, 235, 215]))
+        points = self.points([260, 235, 215])
+        for point, score in zip(points, (.08, .06, .07)):
+            point["acceptedScore"] = score
+        result = self.detect(points)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["status"], "NeedsReview")
         self.assertIsNone(result[0]["outcome"])
         self.assertIsNone(result[0]["teamId"])
+        self.assertEqual(result[0]["confidence"], .06)
 
     def test_descending_candidate_is_not_a_made_shot(self):
         self.assertEqual(self.detect(self.points([170, 190, 215]))[0]["reason"], "descending_near_rim")

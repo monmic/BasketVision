@@ -1,0 +1,104 @@
+{
+  "reviewer": "assistant_visual_review",
+  "date": "2026-10-13",
+  "scope": "16 selected candidates from training frames only; not an exhaustive audit of all detections or all balls",
+  "items": [
+    {
+      "id": "negative-01",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Painted red court arc at left image border; remaining crop is floor and court lines."
+    },
+    {
+      "id": "negative-02",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Painted court arc, floor and markings."
+    },
+    {
+      "id": "negative-03",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Painted court arc, floor and markings."
+    },
+    {
+      "id": "negative-04",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Painted court arc, floor and markings."
+    },
+    {
+      "id": "negative-05",
+      "candidate": "non_ball",
+      "crop": "excluded",
+      "reason": "Candidate on column surface; larger crop includes people and partial bodies, conservatively excluded from empty labels."
+    },
+    {
+      "id": "negative-06",
+      "candidate": "unannotated_ball",
+      "crop": "excluded",
+      "reason": "Ball on the floor by the left wall; checked in unmarked crop and complete frame 13008. Not the ball annotated in the action."
+    },
+    {
+      "id": "negative-07",
+      "candidate": "non_ball",
+      "crop": "excluded",
+      "reason": "Candidate on player head; surrounding crop includes wall-side region with another possible ball. Not safe as an empty crop."
+    },
+    {
+      "id": "negative-08",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Thin court marking at left border; floor crop without visible ball."
+    },
+    {
+      "id": "negative-09",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Painted court arc, floor and markings."
+    },
+    {
+      "id": "negative-10",
+      "candidate": "unannotated_ball",
+      "crop": "excluded",
+      "reason": "Same wall-side floor ball as frame 13008, visible in frame 13014 unmarked crop. Do not label as background."
+    },
+    {
+      "id": "negative-11",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Thin court marking at left border; floor crop without visible ball."
+    },
+    {
+      "id": "negative-12",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Floor and court marking, partial shoes at upper edge; no visible ball."
+    },
+    {
+      "id": "negative-13",
+      "candidate": "non_ball",
+      "crop": "excluded",
+      "reason": "Candidate on player head; crop includes partially visible people, excluded conservatively."
+    },
+    {
+      "id": "negative-14",
+      "candidate": "non_ball",
+      "crop": "verified_negative",
+      "reason": "Floor and painted lines with partial shoes at upper edge; no visible ball."
+    },
+    {
+      "id": "negative-15",
+      "candidate": "non_ball",
+      "crop": "excluded",
+      "reason": "Candidate on player head; surrounding bench and bags not certified ball-free."
+    },
+    {
+      "id": "negative-16",
+      "candidate": "non_ball",
+      "crop": "excluded",
+      "reason": "Candidate on blue player torso; partial bodies and bench context not certified ball-free."
+    }
+  ],
+  "proposalsSha256": "b05b34620de685e5628d6c65a00e913dedf5f83557baeed9b92eddc664ce13ff"
+}

@@ -1,5 +1,420 @@
 # ShotDetector: esperimento offline 0.1
 
+## Integrazione applicativa sperimentale
+
+L'analisi può ora ricevere una calibrazione esplicita del ferro e produrre
+eventi `ShotCandidate` end-to-end. Nell'interfaccia si abilita la funzione,
+si imposta la larghezza del ferro nei pixel originali e si seleziona il centro
+direttamente sul video. La calibrazione è limitata all'intervallo DA → A e va
+usata solo quando l'inquadratura resta fissa.
+
+I candidati vengono calcolati sulle detection accettate al termine del job,
+salvati in `GameEvents` con squadra nulla e mostrati sia nel report Vision sia
+nella lista eventi. Restano esclusi dalle statistiche: lo stato di revisione,
+la motivazione, la track, la calibrazione e i tre punti di evidenza sono
+conservati nei metadata. Pausa e ripresa mantengono i punti nel checkpoint;
+la scrittura finale sostituisce gli eventuali candidati dello stesso job per
+evitare duplicati. La cancellazione dell'analisi li rimuove insieme agli altri
+eventi del job.
+
+Il risultato non classifica segnato/sbagliato e non attribuisce la squadra.
+Nessun candidato non implica assenza di tiri: la copertura dipende ancora dal
+rilevamento e dal tracking della palla.
+
+## Modelli confrontati su Home vs Away e dataset pilota
+
+Completato il confronto sui 72 frame revisionati, stessa soglia 0,02, ingresso
+960, IoU 0,5, due thread CPU. Solo inferenza full-frame, senza tracker, tile o
+filtri geometrici: non confrontare direttamente i falsi positivi con la pipeline
+completa delle sezioni precedenti.
+
+| Modello | Palle abbinate | Detection non abbinate | Palle perse | Inferenza |
+|---|---:|---:|---:|---:|
+| yolo26n attuale | 18 | 46 | 54 | 27,30 s |
+| Lumos | 17 | 780 | 55 | 9,61 s |
+| Universitario | 15 | 60 | 57 | 51,38 s |
+
+Tempi di una singola esecuzione, esclusi warm-up e decodifica. I pesi sono quelli
+già descritti nelle fonti del confronto precedente. Report integrali in
+`storage/diagnostics/home-vs-away-model-benchmark/`; riepilogo versionabile con
+hash dei pesi e quattro soglie in `vision/fixtures/home-vs-away-model-comparison.json`.
+
+La sensibilità alle soglie evidenzia compromessi, non un vincitore universale:
+a 0,10 l'attuale ottiene 7 TP/2 FP e l'universitario 9 TP/5 FP; a 0,25 ottengono
+3/0 e 4/1 rispettivamente. Lumos mantiene numerosi falsi rilevamenti anche a
+0,50 (8 TP/78 FP). Nessuna sostituzione del worker giustificata da questo piccolo
+campione, che contiene solo frame positivi ed è stato revisionato durante lo sviluppo.
+
+### Dataset pilota esportato
+
+Implementato `scripts/export_ball_dataset.py`: esporta PNG originali e label YOLO
+normalizzate (classe unica `0: ball`), con split per episodio e manifest che
+conserva indici frame, provenienza e hash delle annotazioni. Frame esclusi o non
+revisionati non diventano label vuote. Rifiuta fonti discordanti, frame non
+assegnati, episodi condivisi, sovrapposizioni e output preesistenti.
+
+Dataset locale: `storage/diagnostics/home-vs-away-dataset-v1/`.
+Piano in `vision/fixtures/home-vs-away-ball-split-v1.json`:
+
+- Train: tiri 1–3, 41 immagini e 41 box.
+- Validazione: tiro 4, 16 immagini e 16 box.
+- Test: tiro 5, 15 immagini e 15 box.
+
+Cinque test dell'esportatore superati. Verificati tutti i 72 PNG 854×480, la
+corrispondenza tra etichette e annotazioni e l'assenza di frame condivisi.
+Il `data.yaml` usa il percorso assoluto del container dove è stato generato;
+se si sposta il dataset, aggiornare `path` al nuovo percorso.
+
+È un dataset per un esperimento esplorativo, non pronto per conclusioni di
+produzione: nessun negativo verificato e tutti i tiri sono già stati esaminati.
+La separazione per episodio evita la condivisione della stessa azione tra split,
+ma non elimina il fatto che siano scene della stessa partita già usate nello
+sviluppo. Nessun training o deploy avviato.
+
+### Campione aggiuntivo preparato
+
+Pagina `storage/diagnostics/home-vs-away-ball-expansion/index.html`: 20 nuovi
+frame, quattro per sequenza a 400–403, 500–503, 520–523, 540–543, 560–563 s.
+Piano versionato in `vision/fixtures/home-vs-away-ball-expansion-plan.json`.
+Sono esterni ai cinque tiri, selezionati per tempo senza inferire presenza o
+assenza della palla; richiedono annotazione prima dell'uso. Non sono stati
+inclusi automaticamente nel dataset né dichiarati negativi.
+Le esportazioni hanno nomi `home-vs-away-extra-001.json` … `extra-005.json`.
+Il prossimo passo sui dati è revisionare questo campione e aggiungere negativi
+verificati prima di usare il training per decidere un cambio del modello.
+
+## Copia revisionata delle annotazioni — v1
+
+Creata `vision/fixtures/home-vs-away-ball-annotations-revised-v1.json` preservando
+l'originale e registrandone SHA-256. Ridisegnati manualmente 14 box sui ritagli
+originali ingranditi senza overlay del modello, includendo la parte visibile e
+il blur della palla. Verificati poi visivamente i nuovi rettangoli sovrapposti.
+Le coordinate sono approssimate al pixel originale, non copiate dalle detection.
+Gli altri 58 box positivi restano quelli dell'utente.
+
+Esclusi gli 8 frame dichiarati vuoti: il controllo visivo non permette di
+certificarli come negativi. Anche il ritaglio a 449,8 s presenta una regione
+scura compatibile con la palla ma contorni ambigui presso mano e corpo: escluso
+invece di aggiungere un box incerto. La copia contiene quindi 72 frame positivi
+e 72 box, senza negativi verificati. Non è ancora un dataset completo per training.
+
+Modifiche esplicite e motivazioni in `vision/fixtures/home-vs-away-ball-revision-v1.json`.
+Riproduzione senza sovrascrivere file esistenti:
+
+```powershell
+py -3.12 scripts/revise_ball_annotations.py vision/fixtures/home-vs-away-ball-annotations.json vision/fixtures/home-vs-away-ball-revision-v1.json vision/fixtures/home-vs-away-ball-annotations-revised-v1.json
+py -3.12 -m unittest discover -s scripts -p test_revise_ball_annotations.py
+```
+
+Confronto a IoU 0,5 sulla copia revisionata:
+
+| Pipeline | Accettati abbinati | Accettati non abbinati | Palle senza detection accettata |
+|---|---:|---:|---:|
+| Originale | 5 | 2 | 67 |
+| Tracker temporale + filtro camera | 9 | 2 | 63 |
+| Tracker sperimentale + ROI ferro | 9 | 2 | 63 |
+
+Prima del tracker: 18 candidati abbinati, 42 non abbinati, 54 palle perse in
+tutte le varianti. Con i vecchi box sugli stessi 72 frame, gli abbinamenti erano
+4 grezzi e 2 accettati. Il cambiamento deriva dalla revisione del riferimento,
+non da nuove inferenze né da un miglioramento del codice. Il riferimento
+revisionato mostra quattro abbinamenti accettati in più per il tracker
+sperimentale rispetto all'originale, ma non dimostra assenza di regressioni
+altrove né risolve la shot detection.
+
+La selezione dei box revisionati è stata guidata dalle discrepanze del modello:
+questo resta un confronto diagnostico, non un test indipendente. Nessuna soglia
+di valutazione modificata e nessun addestramento/deploy effettuato.
+Report con confronto prima/dopo sugli stessi frame:
+`storage/diagnostics/home-vs-away-ball-audit/revised-v1-evaluation.json`.
+Ritagli senza overlay `refine-0.png` … `refine-2.png`, verifica dei nuovi box
+`revised-boxes-0.png` … `revised-boxes-2.png`, nella stessa cartella.
+
+## Revisione visiva delle sovrapposizioni
+
+Esportati ed esaminati tutti gli 80 frame in 20 tavole, con annotazioni verdi e
+candidati grezzi originali rossi. Pagina locale:
+`storage/diagnostics/home-vs-away-ball-audit/index.html`. Generatore riproducibile:
+`scripts/export_ball_annotation_audit.py VIDEO ANNOTATIONS REPORT OUTPUT`, da
+eseguire con OpenCV e `evaluate_ball_clip.py` nella stessa cartella.
+
+La revisione distingue due problemi: differenze nell'estensione dei rettangoli
+e detection assenti. Sulle 72 palle annotate, 4 hanno una corrispondenza a IoU
+0,5; altre 14 hanno sovrapposizione positiva ma inferiore a 0,5; le restanti 54
+non intersecano alcun candidato. Nei frame 440,0 e 440,2 s, ad esempio, il modello
+localizza la palla ma il rettangolo è più stretto dell'annotazione. Nel terzo
+episodio persistono detection sul bordo sinistro mentre la palla è presso il
+canestro destro; nei passaggi presso tabellone e retina sono frequenti le lacune.
+
+Sensibilità della pipeline originale al criterio di abbinamento:
+
+| IoU | Candidati abbinati / non abbinati / palle perse | Accettati abbinati / non abbinati / palle perse |
+|---|---|---|
+| 0,5 | 4 / 60 / 68 | 2 / 5 / 70 |
+| 0,3 | 18 / 46 / 54 | 5 / 2 / 67 |
+| 0,1 | 18 / 46 / 54 | 5 / 2 / 67 |
+
+La soglia di valutazione resta 0,5. Il confronto a soglie inferiori è diagnostico:
+non rappresenta un miglioramento del modello e non giustifica correggere i box
+umani copiando quelli predetti. Il precedente 2/72 misura quindi gli abbinamenti
+stretti, non tutte le detection visivamente sulla palla.
+
+Segnalato inoltre il frame 13494 (449,8 s), dichiarato senza palla: nella tavola
+la palla sembra visibile accanto alla mano del giocatore vicino al canestro
+destro. Va riesaminato prima del training. Le altre assenze in situazioni di
+occlusione non sono certificate come negativi dal controllo delle sole tavole.
+
+Esito e lista dei frame da rivedere salvati in
+`vision/fixtures/home-vs-away-ball-audit.json`; dettagli geometrici e sensibilità
+in `overlaps.json` e `iou-sensitivity.json` nella cartella locale di revisione.
+Annotazioni originali preservate. Campione non ancora dichiarato pronto per
+training: servono rettangoli coerenti sui bordi visibili e distinzione tra
+assenza verificata e occlusione/ambiguità. Nessun cambio al worker.
+
+## Annotazioni complete: cinque episodi su cinque
+
+Validato il quinto episodio: 16 frame, 15 rettangoli palla e un frame dichiarato
+senza palla. Sorgente, FPS, indici e coordinate coerenti con il piano.
+Copia in `vision/fixtures/home-vs-away-shot-005-ball-annotations.json`.
+Sui frame del quinto episodio tutte e tre le varianti hanno 0 palle corrette
+accettate, 1 detection accettata non abbinata e 15 palle senza detection
+accettata. Prima del tracker: 0 candidati abbinati, 5 non abbinati e 15 palle
+senza candidato corrispondente.
+
+Riuniti i cinque episodi, senza duplicati, in
+`vision/fixtures/home-vs-away-ball-annotations.json`: **80 frame revisionati,
+72 rettangoli palla, 8 frame dichiarati senza palla**. Originali preservati.
+Le annotazioni vuote sono interpretate secondo le dichiarazioni dell'utente;
+questa acquisizione non include una nuova revisione visiva dei box.
+
+Confronto complessivo sui soli 80 frame, IoU >= 0,5, abbinamento uno a uno:
+
+| Pipeline | Palle corrette accettate | Detection accettate non abbinate | Palle senza detection accettata |
+|---|---:|---:|---:|
+| Originale | 2 | 5 | 70 |
+| Tracker temporale + filtro camera | 2 | 9 | 70 |
+| Tracker sperimentale + ROI ferro | 2 | 9 | 70 |
+
+Prima del tracker tutte le varianti hanno 4 candidati abbinati, 60 non abbinati
+e 68 palle senza candidato corrispondente. Questo riferimento non mostra
+vantaggi delle varianti sperimentali. I mancati abbinamenti possono dipendere
+anche dalla precisione dei rettangoli: verificare visivamente sovrapposizioni
+e convenzioni di annotazione prima di utilizzare il campione per il training.
+Sono conteggi di detection a 5 fps, non metriche di riconoscimento dei tiri
+né una misura globale del video.
+
+Report locali in `storage/diagnostics/home-vs-away-ball-review/`:
+`shot-005-evaluation.json` e `all-episodes-evaluation.json`.
+Acquisizione dei cinque episodi completata; nessuna modifica al worker.
+Il riferimento aggregato è destinato anzitutto alla valutazione: non usarlo
+contemporaneamente come training e test. Un eventuale fine-tuning richiede
+altri dati o una separazione esplicita per sequenza.
+
+## Quarto episodio annotato dall'utente
+
+Validato `home-vs-away-shot-004.json`: 16/16 frame del piano, 16 rettangoli
+palla e nessun frame dichiarato senza palla. Sorgente, FPS, indici e coordinate
+coerenti. Copia conservata in `vision/fixtures/home-vs-away-shot-004-ball-annotations.json`.
+Nessuna nuova revisione visiva delle annotazioni.
+
+Confronto IoU >= 0,5 sui soli frame annotati: tutte e tre le pipeline
+(originale, tracker temporale con filtro camera, tracker sperimentale con ROI
+ferro) producono 0 palle corrette accettate, 0 detection accettate non abbinate
+e 16 palle senza detection accettata. Prima del tracker: 0 candidati abbinati,
+4 non abbinati e 16 palle senza candidato corrispondente. Il mancato abbinamento
+può includere errori di localizzazione rispetto ai rettangoli dell'utente.
+I risultati riguardano il campione a 5 fps, non tutti i frame dell'episodio.
+
+Report: `storage/diagnostics/home-vs-away-ball-review/shot-004-evaluation.json`.
+Quattro episodi acquisiti su cinque; nessuna modifica al worker.
+
+## Terzo episodio annotato dall'utente
+
+Validato `home-vs-away-shot-003.json`: 16/16 frame del piano, 12 rettangoli
+palla e 4 frame confermati senza palla. Sorgente, FPS, indici e coordinate
+coerenti. Copia conservata in `vision/fixtures/home-vs-away-shot-003-ball-annotations.json`.
+Le assenze sono dichiarazioni dell'utente; nessuna nuova revisione visiva.
+
+Confronto IoU >= 0,5 sui frame annotati: tutte e tre le pipeline (originale,
+tracker temporale con filtro camera, tracker sperimentale con ROI ferro)
+producono 0 palle corrette accettate, 2 detection accettate non abbinate e
+12 palle senza detection accettata. Prima del tracker: 0 candidati abbinati,
+15 non abbinati e 12 palle senza candidato corrispondente.
+Un box non abbinato può anche indicare localizzazione imprecisa rispetto
+all'annotazione, non necessariamente un oggetto diverso dalla palla.
+
+Report: `storage/diagnostics/home-vs-away-ball-review/shot-003-evaluation.json`.
+Tre episodi acquisiti su cinque; nessuna modifica al worker.
+
+## Secondo episodio annotato dall'utente
+
+Validato `home-vs-away-shot-002.json`: 16/16 frame del piano, 13 rettangoli
+palla e 3 frame confermati senza palla. Sorgente, FPS, indici e coordinate
+coerenti. Copia conservata in `vision/fixtures/home-vs-away-shot-002-ball-annotations.json`.
+I frame vuoti sono trattati come assenze dichiarate dall'utente; nessuna nuova
+verifica visiva delle annotazioni è stata eseguita.
+
+Confronto IoU >= 0,5 sui soli frame annotati:
+
+| Pipeline | Palle corrette accettate | Detection accettate non abbinate | Palle senza detection accettata |
+|---|---:|---:|---:|
+| Originale | 0 | 0 | 13 |
+| Tracker temporale + filtro camera | 0 | 3 | 13 |
+| Tracker sperimentale + ROI ferro | 0 | 3 | 13 |
+
+Prima del tracker: 0 candidati abbinati, 15 non abbinati e 13 palle senza
+candidato corrispondente in tutte e tre le varianti. Un box non abbinato può
+anche essere una localizzazione imprecisa rispetto al rettangolo annotato:
+queste metriche non dimostrano da sole che ogni candidato sia su un altro oggetto.
+Report: `storage/diagnostics/home-vs-away-ball-review/shot-002-evaluation.json`.
+Due episodi acquisiti su cinque; nessuna modifica al worker.
+
+## Primo episodio annotato dall'utente
+
+Ricevute 16 esportazioni cumulative del tiro 7:14: ciascuna conserva i frame
+confermati in precedenza, senza conflitti. `home-vs-away-shot-001 (15).json`
+contiene l'intero episodio: 16 frame e 16 rettangoli. Verificati sorgente,
+FPS, coordinate normalizzate e corrispondenza esatta al piano di campionamento.
+Originali preservati. Copia per regressioni in
+`vision/fixtures/home-vs-away-shot-001-ball-annotations.json`.
+
+Valutazione sui soli 16 frame annotati, IoU >= 0,5, abbinamento uno a uno:
+
+| Pipeline | Palle corrette accettate | Detection accettate non abbinate | Palle senza detection accettata |
+|---|---:|---:|---:|
+| Originale | 2 | 2 | 14 |
+| Tracker temporale + filtro camera | 2 | 3 | 14 |
+| Tracker sperimentale + ROI ferro | 2 | 3 | 14 |
+
+Prima del tracker tutte e tre le varianti hanno 4 candidati abbinati, 21 non
+abbinati e 12 palle senza candidato corrispondente. Il riferimento conferma
+il limite del rilevatore su questo episodio; il conteggio dei punti accettati
+da solo non misura il miglioramento. Sono metriche rispetto ai box dell'utente,
+non una nuova revisione visiva: errori di localizzazione possono produrre una
+coppia falso positivo/falso negativo. Nessuna stima globale sui tiri.
+
+Report locale: `storage/diagnostics/home-vs-away-ball-review/shot-001-evaluation.json`.
+Per gli altri episodi basta scaricare una volta il JSON dopo aver confermato
+tutti i frame: l'esportazione include tutte le annotazioni confermate nella pagina.
+
+## Pagina di annotazione Home vs Away
+
+Creato il pacchetto locale `storage/diagnostics/home-vs-away-ball-review/index.html`.
+Aprirlo nel browser: contiene cinque episodi, ciascuno con 16 frame originali
+campionati ogni 0,2 secondi, per un totale di 80 frame. Intervalli inclusivi:
+433–436, 440–443, 449–452, 455–458 e 472–475 secondi. I frame sono decodificati
+sequenzialmente dal video originale per conservarne gli indici esatti.
+
+Disegnare un rettangolo stretto attorno a ogni palla visibile, anche fuori dal
+gioco, poi premere **Conferma palle**. Usare **Escludi frame** per posizione
+ambigua o occlusione; **Nessuna palla** solo per assenza verificata. I frame
+non confermati non vengono esportati come negativi. Nessuna detection del
+modello è precompilata come annotazione vera.
+
+Prima di chiudere ogni pagina, scaricare il JSON: i nomi sono distinti,
+`home-vs-away-shot-001.json` fino a `home-vs-away-shot-005.json`. Il lavoro
+resta in memoria fino all'esportazione. Conservare i file per la successiva
+valutazione; non serve rilanciare l'analisi partita. Il campione a 5 fps serve
+alla prima revisione, non prova continuità delle traiettorie a 30 fps.
+
+Piano riproducibile: `vision/fixtures/home-vs-away-ball-review-plan.json`.
+Generatore: `scripts/prepare_shot_ball_review.py`, con il template
+`scripts/ball_review.html` nella stessa cartella. Richiede OpenCV, disponibile
+nel container worker. Il generatore rifiuta cartelle di output già esistenti.
+
+```powershell
+docker compose cp scripts/prepare_shot_ball_review.py worker:/tmp/prepare_shot_ball_review.py
+docker compose cp scripts/ball_review.html worker:/tmp/ball_review.html
+docker compose cp vision/fixtures/home-vs-away-ball-review-plan.json worker:/tmp/home-vs-away-ball-review-plan.json
+docker compose exec -T worker python /tmp/prepare_shot_ball_review.py /app/storage/videos/35b68704-541f-4c6d-b8ab-45228266102a.mp4 /tmp/home-vs-away-ball-review-plan.json /app/storage/diagnostics/home-vs-away-ball-review
+```
+
+## Confronto eseguito con due modelli specializzati — 22 settembre 2026
+
+Scaricati e provati due checkpoint pubblici, con revisioni e SHA-256 salvati in
+`vision/fixtures/specialist-model-benchmark.json`. Inferenza in container separati,
+senza rete, filesystem del container in sola lettura, dati montati in lettura
+e scrittura limitata alla cartella dei risultati. Solo classe palla, nessuna
+identificazione dei giocatori. Worker applicativo invariato.
+
+Fonti e licenze dichiarate dagli autori:
+
+- [Lumos-88](https://huggingface.co/Lumos-88/YOLO11-fine-tuned-for-basketball-detection): specializzato su riprese da drone, MIT dichiarata; il checkpoint conserva le etichette COCO, palla = `32: sports ball`.
+- [446f6e6e79](https://huggingface.co/446f6e6e79/YOLO-basketball-fineTuned): addestrato su una partita universitaria, MIT dichiarata; palla = `0: Ball`. L'autore segnala limiti di generalizzazione.
+
+Le dichiarazioni di licenza delle schede non risolvono da sole gli obblighi
+di distribuzione dei modelli base o dei dataset. Nessun peso incluso in Git.
+
+Stessi 22 frame annotati, 12 palle, full-frame 960, confidence 0,02, IoU 0,5:
+
+| Modello | Palle trovate | Falsi rilevamenti | Palle perse | Inferenza CPU |
+|---|---:|---:|---:|---:|
+| Attuale yolo26n | 4 | 8 | 8 | 4,19 s |
+| Lumos | 3 | 222 | 9 | 2,65 s |
+| Universitario | 3 | 30 | 9 | 16,05 s |
+
+Controllo aggiuntivo filtrando i box salvati a confidence 0,10 / 0,25 / 0,50:
+nessuna evidenza di un vantaggio dei due specialisti sul campione. A 0,50 il
+modello universitario e quello attuale hanno entrambi 2 veri positivi e 0 falsi
+positivi; Lumos ha 2 veri positivi e 54 falsi positivi. Non è una ricerca di
+soglie validata su un insieme di test indipendente, né un benchmark della
+pipeline completa. I tempi sono singole misure, esclusi warm-up e decodifica.
+
+Risultati locali in `storage/diagnostics/specialist-benchmark/`:
+`lumos-ball-960.json`, `university-ball-960.json`, `threshold-comparison.json`.
+Il preliminare `lumos-960.json` filtrava erroneamente la classe person ed è
+escluso dal confronto. Aggiunto `--class-name` al benchmark: se l'etichetta non
+corrisponde all'indice richiesto, interrompe la prova prima dell'inferenza.
+Usare `--class-id 32 --class-name "sports ball"` per Lumos e
+`--class-id 0 --class-name Ball` per il modello universitario.
+
+Due test benchmark superati. Nessun sostituto selezionato e nessun deploy:
+queste prove non modificano il risultato dei cinque tiri Home vs Away.
+Il prossimo sviluppo utile è costruire un riferimento annotato dei passaggi
+vicino al ferro su quel video e usarlo per valutazione e fine-tuning con una
+separazione per sequenza tra training e test, evitando frame adiacenti nei due set.
+
+## Benchmark dei modelli — 22 settembre 2026
+
+Aggiunto `scripts/benchmark_ball_model.py` per confrontare pesi locali su frame
+già annotati, prima dell'integrazione nel worker. Supporta classe palla esplicita
+(anche diversa da COCO 32), dimensione d'ingresso e confidence. Registra SHA-256
+dei pesi, classe, impostazioni CPU, detection e metriche IoU 0,5 con abbinamento
+uno a uno. Nessun download implicito e nessuna scrittura nel database.
+
+Prime prove eseguite sui 22 frame annotati di `test-online-720p-15fps.mp4`
+(12 palle annotate), usando `yolo26n.pt`, confidence 0,02 e due thread CPU:
+
+| Ingresso | Palle trovate | Falsi rilevamenti | Palle perse | Inferenza totale |
+|---|---:|---:|---:|---:|
+| 960 | 4 | 8 | 8 | 4,19 s |
+| 1280 | 4 | 11 | 8 | 4,46 s |
+
+Inferenza solo full-frame, senza tile, filtri geometrici o tracker. Questi
+conteggi non sono direttamente confrontabili con quelli della pipeline completa.
+Tempi di singole esecuzioni, esclusi caricamento, warm-up e decodifica; non sono
+stime delle prestazioni in produzione. Il campione è piccolo e diverso dai
+cinque tiri Home vs Away: il risultato non cambia lo 0/5 della prova precedente.
+L'ingresso più grande non migliora il conteggio dei veri positivi in questo
+campione; non è stato attivato nel worker. Nessun modello alternativo è stato
+ancora valutato: nel container era disponibile solo `yolo26n.pt`.
+
+Report locali in `storage/diagnostics/model-benchmark-yolo26n.json` e
+`storage/diagnostics/model-benchmark-yolo26n-1280.json`.
+
+Esempio riproducibile (il nome di output deve essere nuovo):
+
+```powershell
+docker compose cp scripts/benchmark_ball_model.py worker:/tmp/benchmark_ball_model.py
+docker compose cp scripts/evaluate_ball_clip.py worker:/tmp/evaluate_ball_clip.py
+docker compose exec -T worker python /tmp/benchmark_ball_model.py /app/storage/videos/test-online-720p-15fps.mp4 /app/storage/diagnostics/annotations.json /app/yolo26n.pt /app/storage/diagnostics/model-benchmark-new.json --class-id 32 --imgsz 960
+py -3.12 -m unittest discover -s scripts -p test_ball_benchmark.py
+```
+
+Due test superati: validazione delle annotazioni e conteggio di duplicati,
+assenze revisionate, frame esclusi e frame mancanti. Per un detector specializzato
+usare il relativo file di pesi locale e l'indice della sua classe palla.
+
 ## Intervento: inferenza mirata vicino al ferro
 
 Aggiunto ed eseguito `scripts/diagnose_rim_roi.py`: usa la calibrazione manuale

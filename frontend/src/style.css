@@ -13,3 +13,5 @@
 .login{max-width:520px;margin:10vh auto}.login form,.login label{display:grid;gap:12px}.feature{padding:8px 12px;border-radius:8px;background:#e8f4ef;color:#174c37}.feature.locked{background:#f0f0f0;color:#555}details{margin-top:18px}summary{cursor:pointer;margin-bottom:12px}
 
 .admin-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.admin-heading h2{margin:0}.admin-users{overflow-x:auto}.admin-users td{white-space:nowrap}.presence-online{color:#17683b;font-weight:600}@media(max-width:600px){.admin-heading{align-items:flex-start;flex-direction:column}}
+
+.shot-candidate-setup{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding:14px;border:1px solid #ccd4e0;border-radius:12px;background:#f7f9fc}.shot-candidate-setup p{width:100%;margin:0;color:#526177}.shot-candidate-setup label{display:flex;align-items:center;gap:8px}.shot-candidate-setup input[type="number"]{width:100px}.shot-candidate-setup input[type="checkbox"]{width:auto}video.rim-calibration-active{cursor:crosshair;outline:3px solid #f4a261;outline-offset:2px}.event.shot-candidate{border-color:#f4a261;background:#fff8ef}

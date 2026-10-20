@@ -8,7 +8,8 @@ public enum EventType
     ShotMade, ShotMissed, FreeThrowMade, FreeThrowMissed,
     OffensiveRebound, DefensiveRebound, Turnover, Steal,
     Assist, Block, Foul, TechnicalFoul, Violation,
-    JumpBall, PeriodStart, PeriodEnd, Timeout
+    JumpBall, PeriodStart, PeriodEnd, Timeout,
+    ShotCandidate
 }
 
 public sealed class Team

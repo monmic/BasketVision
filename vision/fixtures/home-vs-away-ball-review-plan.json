@@ -1,0 +1,12 @@
+{
+  "source": "35b68704-541f-4c6d-b8ab-45228266102a.mp4",
+  "title": "Home vs Away — palla vicino al ferro",
+  "sampleStepSeconds": 0.2,
+  "episodes": [
+    {"id": "shot-001", "label": "Tiro 7:14", "start": 433, "end": 436},
+    {"id": "shot-002", "label": "Tiro 7:21", "start": 440, "end": 443},
+    {"id": "shot-003", "label": "Tiro 7:30", "start": 449, "end": 452},
+    {"id": "shot-004", "label": "Tiro 7:36", "start": 455, "end": 458},
+    {"id": "shot-005", "label": "Tiro 7:53", "start": 472, "end": 475}
+  ]
+}

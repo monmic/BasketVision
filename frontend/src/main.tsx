@@ -12,6 +12,8 @@ type AnalysisJob = {analysisId:string,gameId:string,status:AnalysisStatus,progre
 type ActiveAnalysis = AnalysisJob & {gameName:string,createdAtUtc:string};
 type BallPoint = {shotMotionEligible?:boolean,sceneMotionState?:string,sceneResidualPx?:number,sceneCameraShiftPx?:number,timestamp:number,trackId?:number|null,trackState?:'tentative'|'confirmed'|'lost',confidence:number,qualityScore?:number,acceptedScore?:number,acceptanceReason?:string,rejectionReason?:string,associationType?:string,source?:string,x1:number,y1:number,x2:number,y2:number,centerX:number,centerY:number,width?:number,height?:number};
 type DebugFrame = {fileName:string,timestamp:number,rawCandidates:number,acceptedDetections:number,rejectedCandidates:number};
+type ShotCandidate = {timestamp:number,startSeconds:number,endSeconds:number,trackId:number,type:'ShotCandidate',status:'NeedsReview',teamId:null,outcome:null,confidence:number,reason:string,evidence:{timestamp:number,x:number,y:number}[]};
+type RimCalibration = {x:number,y:number,width:number,startSeconds:number,endSeconds:number};
 type PersonConfidenceBuckets = {belowTrackLow025:number,trackLow025To060:number,trackHigh060To070:number,newTrack070Plus:number};
 type VisionResult = {
  analysisId:string;
@@ -21,8 +23,10 @@ type VisionResult = {
  ballModel?:string;
  config?:{personFrameStride?:number,personConfidence?:number,personImgsz?:number,personTracker?:string,personTrackerThresholds?:{trackLow:number,trackHigh:number,newTrack:number,gmcMethod:string},ballFrameStride?:number,ballConfidence?:number,ballImgsz?:number,ballUseTiles?:boolean,ballTileStride?:number,ballTileImgsz?:number,ballTrackMinHits?:number,ballTrackTemporalWindow?:boolean,ballCameraMotionFilter?:boolean,ballTrackConfirmWindowSeconds?:number,ballTrackRecoverySeconds?:number,ballAcceptedMinScore?:number,ballTrackUpdateMinScore?:number,ballTrackNewMinScore?:number,ballTrackNewMinConfidence?:number,ballDebugExport?:boolean};
  video:{fps:number,totalFrames:number,width:number,height:number,durationSeconds:number,analysisStartSeconds?:number,analysisEndSeconds?:number|null,analysisDurationSeconds?:number|null,frameStride:number,processedFrames:number,processedPersonFrames?:number,processedBallFrames?:number};
- summary:{personDetections:number,personTrackedDetections?:number,personUntrackedDetections?:number,personTrackCreations?:number,personTrackAssociations?:number,personFramesWithTracks?:number,personHighConfidenceWithId?:number,personHighConfidenceWithoutId?:number,averagePersonConfidence?:number,medianPersonConfidence?:number,personConfidenceBuckets?:PersonConfidenceBuckets,ballDetections:number,rawBallCandidates?:number,acceptedBallDetections?:number,rejectedBallCandidates?:number,ballAcceptanceReasons?:Record<string,number>,ballRejectionReasons?:Record<string,number>,ballTracksCreated?:number,ballWeakTrackUpdates?:number,fullBallDetections?:number,tiledBallDetections?:number,framesWithBall:number,maxPersonsInFrame:number,uniquePersonTracks:number,uniqueBallTracks:number,confirmedBallTracks?:number,validBallTracks?:number,averageBallConfidence?:number,medianBallConfidence?:number,ballDetectionsPerSecond?:number,storedBallPoints:number};
+ summary:{personDetections:number,personTrackedDetections?:number,personUntrackedDetections?:number,personTrackCreations?:number,personTrackAssociations?:number,personFramesWithTracks?:number,personHighConfidenceWithId?:number,personHighConfidenceWithoutId?:number,averagePersonConfidence?:number,medianPersonConfidence?:number,personConfidenceBuckets?:PersonConfidenceBuckets,ballDetections:number,rawBallCandidates?:number,acceptedBallDetections?:number,rejectedBallCandidates?:number,ballAcceptanceReasons?:Record<string,number>,ballRejectionReasons?:Record<string,number>,ballTracksCreated?:number,ballWeakTrackUpdates?:number,fullBallDetections?:number,tiledBallDetections?:number,framesWithBall:number,maxPersonsInFrame:number,uniquePersonTracks:number,uniqueBallTracks:number,confirmedBallTracks?:number,validBallTracks?:number,averageBallConfidence?:number,medianBallConfidence?:number,ballDetectionsPerSecond?:number,storedBallPoints:number,shotCandidates?:number};
  ballTrack:BallPoint[];
+ shotCandidates?:ShotCandidate[];
+ shotCandidateCalibration?:RimCalibration|null;
  debugFrames?:DebugFrame[];
 };
 
@@ -37,6 +41,10 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
  const [uploading,setUploading]=useState(false);
  const [rangeStart,setRangeStart]=useState('00:00:00');
  const [rangeEnd,setRangeEnd]=useState('');
+ const [shotCandidatesEnabled,setShotCandidatesEnabled]=useState(false);
+ const [calibratingRim,setCalibratingRim]=useState(false);
+ const [rimWidth,setRimWidth]=useState(40);
+ const [rimCalibration,setRimCalibration]=useState<RimCalibration|null>(null);
  const video=useRef<HTMLVideoElement>(null);
 
  const loadGames=async()=>{
@@ -65,6 +73,9 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    const g:Game=await r.json();
    setGame(g);
    setVision(null);
+   setShotCandidatesEnabled(false);
+   setCalibratingRim(false);
+   setRimCalibration(null);
    if(updateUrl) history.replaceState(null,'',`${location.pathname}?game=${g.id}`);
 
    const jr=await fetch(`${API}/api/games/${g.id}/analysis/latest`);
@@ -136,6 +147,9 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
      setSelectedFile(null);
      await reloadMe();
      setVision(null);
+     setShotCandidatesEnabled(false);
+     setCalibratingRim(false);
+     setRimCalibration(null);
    }finally{
      setUploading(false);
    }
@@ -165,8 +179,10 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    const end=parseVideoTime(rangeEnd);
    if(Number.isNaN(start)||Number.isNaN(end)){alert('Usa il formato HH:MM:SS, ad esempio 00:12:30.');return;}
    if(end!==null && end<=start){alert('Il valore A deve essere maggiore di DA.');return;}
+   if(shotCandidatesEnabled&&!rimCalibration){alert('Seleziona il centro del ferro sul video prima di avviare i candidati di tiro.');return;}
+   const calibration=shotCandidatesEnabled&&rimCalibration?{...rimCalibration,startSeconds:start,endSeconds:end??video.current?.duration??rimCalibration.endSeconds}:null;
    setVision(null);
-   const r=await fetch(`${API}/api/games/${game.id}/analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startSeconds:start,endSeconds:end})});
+   const r=await fetch(`${API}/api/games/${game.id}/analysis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startSeconds:start,endSeconds:end,shotCandidates:calibration?{enabled:true,rim:calibration}:null})});
    if(!r.ok){alert(await errorMessage(r));return;}
    const created:AnalysisJob=await r.json();
    if(!created.analysisId){console.error('Analysis response has no analysisId',created);return;}
@@ -209,6 +225,25 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    if(video.current){video.current.currentTime=Math.max(0,ts-4);video.current.play()}
  }
 
+ function selectRim(e:React.MouseEvent<HTMLVideoElement>){
+   if(!calibratingRim||!video.current) return;
+   const rect=video.current.getBoundingClientRect();
+   const videoRatio=video.current.videoWidth/video.current.videoHeight;
+   const elementRatio=rect.width/rect.height;
+   const contentWidth=elementRatio>videoRatio?rect.height*videoRatio:rect.width;
+   const contentHeight=elementRatio>videoRatio?rect.height:rect.width/videoRatio;
+   const offsetX=rect.left+(rect.width-contentWidth)/2;
+   const offsetY=rect.top+(rect.height-contentHeight)/2;
+   if(e.clientX<offsetX||e.clientX>offsetX+contentWidth||e.clientY<offsetY||e.clientY>offsetY+contentHeight) return;
+   const scaleX=video.current.videoWidth/contentWidth;
+   const scaleY=video.current.videoHeight/contentHeight;
+   const start=parseVideoTime(rangeStart)??0;
+   const parsedEnd=parseVideoTime(rangeEnd);
+   const end=parsedEnd??video.current.duration;
+   setRimCalibration({x:(e.clientX-offsetX)*scaleX,y:(e.clientY-offsetY)*scaleY,width:rimWidth,startSeconds:start,endSeconds:end});
+   setCalibratingRim(false);
+ }
+
  const isRunning=job?.status==='Pending'||job?.status==='Processing';
  const isPaused=job?.status==='Paused';
 
@@ -225,9 +260,11 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
 
    {game.videoPath&&<div className="analysis-range"><div><b>Intervallo da analizzare</b><span>Lascia “A” vuoto per arrivare fino alla fine del video.</span></div><label>DA<input value={rangeStart} onChange={e=>setRangeStart(e.target.value)} placeholder="00:00:00"/></label><button type="button" onClick={()=>setRangeStart(formatVideoTime(video.current?.currentTime??0))}>Usa posizione</button><label>A<input value={rangeEnd} onChange={e=>setRangeEnd(e.target.value)} placeholder="fine video"/></label><button type="button" onClick={()=>setRangeEnd(formatVideoTime(video.current?.currentTime??0))}>Usa posizione</button></div>}
 
+   {game.videoPath&&<div className="shot-candidate-setup"><label><input type="checkbox" checked={shotCandidatesEnabled} onChange={e=>{setShotCandidatesEnabled(e.target.checked);setCalibratingRim(false)}}/> Candidati di tiro sperimentali</label>{shotCandidatesEnabled&&<><p>Valido per una ripresa fissa: porta il video su un fotogramma nitido, poi indica il centro del ferro.</p><label>Larghezza ferro (pixel video)<input type="number" min="4" step="1" value={rimWidth} onChange={e=>setRimWidth(Math.max(4,Number(e.target.value)||4))}/></label><button type="button" onClick={()=>setCalibratingRim(true)}>{calibratingRim?'Clicca ora sul ferro':'Seleziona ferro sul video'}</button>{rimCalibration&&<span>Ferro: x {rimCalibration.x.toFixed(0)}, y {rimCalibration.y.toFixed(0)}, larghezza {rimCalibration.width}px</span>}</>}</div>}
+
    {job&&<div className={`analysis-status ${job.status.toLowerCase()}`}><div className="analysis-status-head"><div><b>{job.status==='Completed'?'Analisi completata':job.status==='Failed'?'Analisi fallita':job.status==='Paused'?'Analisi in pausa':job.status==='Pending'?'Analisi in coda':'Analisi CV in corso'}</b>{isRunning&&<span>Puoi lasciare questa pagina: il worker continuerà in background.</span>}{isPaused&&<span>Il checkpoint è stato salvato. Riprendi per continuare dal punto raggiunto.</span>}{job.status==='Failed'&&<span>{job.error??'Errore durante l’analisi'}</span>}</div><strong>{job.status==='Completed'?'100%':`${job.progress}%`}</strong></div>{(isRunning||isPaused)&&<div className="progress-track large"><div className="progress-fill" style={{width:`${Math.max(1,job.progress)}%`}}/></div>}<div className="analysis-controls">{isRunning&&<button onClick={()=>pauseAnalysis(job.analysisId)}>Pausa</button>}{isPaused&&<button onClick={()=>resumeAnalysis(job.analysisId)}>Riprendi</button>}<button className="danger" onClick={()=>deleteAnalysis(job.analysisId)}>Elimina elaborazione</button></div></div>}
 
-   {game.videoPath&&<video ref={video} controls src={`${API}/api/games/${game.id}/video`}/>}</section>
+   {game.videoPath&&<video ref={video} controls={!calibratingRim} className={calibratingRim?'rim-calibration-active':''} onClick={selectRim} src={`${API}/api/games/${game.id}/video`}/>}</section>
 
    {vision&&<section className="card">
      <h2>Vision debug — {vision.mode==='vision-cv02.4'?'CV-02.4':vision.mode==='vision-cv02.3'?'CV-02.3':vision.mode==='vision-cv02.2'?'CV-02.2':vision.mode==='vision-cv02.1'?'CV-02.1':'CV-02'}</h2>
@@ -237,10 +274,11 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
      {vision.summary.personConfidenceBuckets&&<div className="diagnostic-note"><b>Diagnostica person tracker:</b> conf media {((vision.summary.averagePersonConfidence??0)*100).toFixed(1)}%, mediana {((vision.summary.medianPersonConfidence??0)*100).toFixed(1)}%. Sotto 0.25: {vision.summary.personConfidenceBuckets.belowTrackLow025}; 0.25–0.60: {vision.summary.personConfidenceBuckets.trackLow025To060}; 0.60–0.70: {vision.summary.personConfidenceBuckets.trackHigh060To070}; ≥0.70: {vision.summary.personConfidenceBuckets.newTrack070Plus}. Creazioni: {vision.summary.personTrackCreations??'-'}; associazioni: {vision.summary.personTrackAssociations??'-'}; frame con ID: {vision.summary.personFramesWithTracks??'-'}; detection ≥0.70 con ID: {vision.summary.personHighConfidenceWithId??'-'}, senza ID: {vision.summary.personHighConfidenceWithoutId??'-'}.</div>}
      {(vision.summary.ballAcceptanceReasons||vision.summary.ballRejectionReasons)&&<div className="diagnostic-note"><b>Decisioni ball:</b> track create {vision.summary.ballTracksCreated??0}, update deboli {vision.summary.ballWeakTrackUpdates??0}. Accepted: {Object.entries(vision.summary.ballAcceptanceReasons??{}).map(([reason,count])=>`${reason}=${count}`).join(', ')||'-'}. Rejected: {Object.entries(vision.summary.ballRejectionReasons??{}).map(([reason,count])=>`${reason}=${count}`).join(', ')||'-'}.</div>}
      {(vision.debugFrames?.length??0)>0&&<><h3>Campioni debug annotati</h3><div className="debug-gallery">{vision.debugFrames!.slice(0,6).map(sample=><a key={sample.fileName} href={`${API}/api/analysis/${vision.analysisId}/debug/${encodeURIComponent(sample.fileName)}`} target="_blank" rel="noreferrer"><img src={`${API}/api/analysis/${vision.analysisId}/debug/${encodeURIComponent(sample.fileName)}`} alt={`Detection accettata a ${sample.timestamp.toFixed(2)} secondi`}/><b>{sample.timestamp.toFixed(2)}s</b><span>raw {sample.rawCandidates} · accepted {sample.acceptedDetections} · rejected {sample.rejectedCandidates}</span></a>)}</div></>}
+     {vision.shotCandidateCalibration&&<><h3>Candidati di tiro sperimentali ({vision.shotCandidates?.length??0})</h3><p className="diagnostic-note">Richiedono revisione: non indicano canestro segnato o sbagliato e la squadra non è ancora attribuita.</p>{(vision.shotCandidates?.length??0)===0?<p>Nessun candidato nell’intervallo calibrato.</p>:<div className="events">{vision.shotCandidates!.map((candidate,i)=><button className="event shot-candidate" key={`${candidate.timestamp}-${i}`} onClick={()=>seek(candidate.timestamp)}><b>{candidate.timestamp.toFixed(2)}s</b><span>Da revisionare</span><span>{candidate.reason==='rising_rim_approach'?'Avvicinamento al ferro':'Discesa vicino al ferro'}</span><small>{Math.round(candidate.confidence*100)}%</small></button>)}</div>}</>}
      <h3>Prime detection accettate</h3>{vision.ballTrack.length===0?<p>Nessuna detection accettata: verificare soglie soft o usare un detector basket-specifico.</p>:<div className="events">{vision.ballTrack.slice(0,150).map((p,i)=><button className="event" title={p.acceptanceReason??p.rejectionReason} key={`${p.timestamp}-${i}`} onClick={()=>seek(p.timestamp)}><b>{p.timestamp.toFixed(2)}s</b><span>{p.source??'ball'}</span><span>track {p.trackId??'-'} · {p.trackState??'legacy'}</span><small>{Math.round(p.confidence*100)}%</small></button>)}</div>}
    </section>}
 
-   {report&&<section className="grid"><div className="card"><h2>Statistiche eventi</h2><p>CV-02 migliora la detection/traiettoria della palla; gli eventi basket verranno alimentati dal successivo ShotDetector.</p><table><thead><tr><th>Stat</th>{report.teams.map(t=><th key={t.teamId}>{t.teamName}</th>)}</tr></thead><tbody>{Object.keys(report.teams[0]?.stats??{}).map(k=><tr key={k}><td>{k}</td>{report.teams.map(t=><td key={t.teamId}>{t.stats[k]??0}</td>)}</tr>)}</tbody></table></div><div className="card"><h2>Eventi</h2><div className="events">{report.events.map(ev=><button className="event" key={ev.id} onClick={()=>seek(ev.videoTimestamp)}><b>{ev.videoTimestamp.toFixed(1)}s</b><span>{ev.team??'-'}</span><span>{ev.type}</span><small>{Math.round(ev.confidence*100)}%</small></button>)}</div></div></section>}</>}
+   {report&&<section className="grid"><div className="card"><h2>Statistiche eventi</h2><p>I candidati di tiro restano separati dalle statistiche finché non vengono classificati e attribuiti a una squadra.</p><table><thead><tr><th>Stat</th>{report.teams.map(t=><th key={t.teamId}>{t.teamName}</th>)}</tr></thead><tbody>{Object.keys(report.teams[0]?.stats??{}).map(k=><tr key={k}><td>{k}</td>{report.teams.map(t=><td key={t.teamId}>{t.stats[k]??0}</td>)}</tr>)}</tbody></table></div><div className="card"><h2>Eventi e candidati</h2><div className="events">{report.events.map(ev=><button className={`event ${ev.type==='ShotCandidate'?'shot-candidate':''}`} key={ev.id} onClick={()=>seek(ev.videoTimestamp)}><b>{ev.videoTimestamp.toFixed(1)}s</b><span>{ev.team??(ev.type==='ShotCandidate'?'Da attribuire':'-')}</span><span>{ev.type==='ShotCandidate'?'Candidato di tiro':ev.type}</span><small>{Math.round(ev.confidence*100)}%</small></button>)}</div></div></section>}</>}
  </main>
 }
 const root=document.getElementById('root')!;

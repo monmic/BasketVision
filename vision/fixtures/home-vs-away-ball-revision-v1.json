@@ -1,0 +1,34 @@
+{
+  "source": "35b68704-541f-4c6d-b8ab-45228266102a.mp4",
+  "width": 854,
+  "height": 480,
+  "reviewer": "assistant",
+  "method": "Manual integer-pixel bounds from unannotated nearest-neighbour enlarged crops. Include visible ball and motion blur; do not copy predicted boxes. Approximate boundaries at this resolution.",
+  "limitation": "Targeted review selected after inspecting detector overlaps. Diagnostic reference, not an independent test set or a fully relabeled training dataset. Other positive boxes inherited from user.",
+  "replaceBoxesPixels": [
+    {"frame": 12996, "boxes": [[366,212,377,225]]},
+    {"frame": 13032, "boxes": [[380,162,391,175]]},
+    {"frame": 13044, "boxes": [[340,91,351,103]]},
+    {"frame": 13050, "boxes": [[318,78,330,90]]},
+    {"frame": 13080, "boxes": [[282,126,296,140]]},
+    {"frame": 13200, "boxes": [[56,140,73,158]]},
+    {"frame": 13206, "boxes": [[101,104,117,118]]},
+    {"frame": 13236, "boxes": [[272,237,285,249]]},
+    {"frame": 13692, "boxes": [[546,119,557,130]]},
+    {"frame": 13698, "boxes": [[520,89,532,101]]},
+    {"frame": 13704, "boxes": [[492,76,504,89]]},
+    {"frame": 13710, "boxes": [[462,80,474,92]]},
+    {"frame": 14184, "boxes": [[431,173,444,185]]},
+    {"frame": 14190, "boxes": [[411,152,423,166]]}
+  ],
+  "excludeFrames": [
+    {"frame": 13260, "reason": "Ball position obscured by players; absence not established."},
+    {"frame": 13266, "reason": "Crowded possession; visible extent of ball uncertain."},
+    {"frame": 13278, "reason": "Ball possibly hidden by ball-handler; not a verified negative."},
+    {"frame": 13482, "reason": "Ball obscured among players during drive."},
+    {"frame": 13488, "reason": "Ball near player body; reliable visible boundary unavailable."},
+    {"frame": 13494, "reason": "Enlarged crop shows ambiguous dark round region by hand/hip; possible ball but uncertain extent. Do not retain as a negative."},
+    {"frame": 13560, "reason": "Ball may be occluded by moving player; absence not established."},
+    {"frame": 14166, "reason": "Ball potentially hidden at torso/hands during drive; not a verified negative."}
+  ]
+}
