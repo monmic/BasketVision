@@ -183,12 +183,21 @@ app.MapGet("/api/analysis/active", async (BasketVisionDbContext db) =>
     return Results.Ok(jobs);
 });
 
-app.MapGet("/api/games/{id:guid}/events", async (Guid id, BasketVisionDbContext db, AccessService access, ICurrentUser user) =>
+app.MapGet("/api/games/{id:guid}/analyses", async (Guid id, BasketVisionDbContext db) =>
+{
+    if (!await db.Games.AnyAsync(g => g.Id == id)) return Results.NotFound();
+    return Results.Ok(await db.AnalysisJobs.Where(j => j.GameId == id).OrderByDescending(j => j.CreatedAtUtc)
+        .ThenByDescending(j => j.Id).Select(j => new { analysisId = j.Id, j.GameId, j.Status, j.Progress, j.Error, j.CreatedAtUtc }).ToListAsync());
+});
+
+app.MapGet("/api/games/{id:guid}/events", async (Guid id, Guid? analysisId, BasketVisionDbContext db, AccessService access, ICurrentUser user) =>
 {
     if (!await db.Games.AnyAsync(g => g.Id == id)) return Results.NotFound();
     var denial = AccessService.Feature(await access.GetAccess(user.UserId!.Value, user.IsAdmin), Features.AdvancedEvents);
     if (denial != null) return AccessService.Denied(denial);
-    var events = await db.GameEvents.Where(x => x.GameId == id).OrderBy(x => x.VideoTimestamp).ToListAsync();
+    var selected = await AnalysisSelection.Resolve(db, id, analysisId);
+    if (analysisId.HasValue && selected is null) return Results.NotFound();
+    var events = await db.GameEvents.Where(x => x.GameId == id && x.AnalysisJobId == selected).OrderBy(x => x.VideoTimestamp).ToListAsync();
     return Results.Ok(events);
 });
 
@@ -196,13 +205,15 @@ app.MapPost("/api/games/{id:guid}/shots", ShotReviews.Create);
 app.MapGet("/api/games/{id:guid}/report.csv", ReportExport.Download);
 app.MapPut("/api/games/{id:guid}/shots/{eventId:guid}", ShotReviews.Update);
 
-app.MapGet("/api/games/{id:guid}/report", async (Guid id, BasketVisionDbContext db, AccessService access, ICurrentUser user) =>
+app.MapGet("/api/games/{id:guid}/report", async (Guid id, Guid? analysisId, BasketVisionDbContext db, AccessService access, ICurrentUser user) =>
 {
     var game = await db.Games.Include(x => x.Teams).SingleOrDefaultAsync(x => x.Id == id);
     if (game is null) return Results.NotFound();
     var denial = AccessService.Feature(await access.GetAccess(user.UserId!.Value, user.IsAdmin), Features.AdvancedEvents);
     if (denial != null) return AccessService.Denied(denial);
-    var events = await db.GameEvents.Where(x => x.GameId == id).OrderBy(x => x.VideoTimestamp).ToListAsync();
+    var selected = await AnalysisSelection.Resolve(db, id, analysisId);
+    if (analysisId.HasValue && selected is null) return Results.NotFound();
+    var events = await db.GameEvents.Where(x => x.GameId == id && x.AnalysisJobId == selected).OrderBy(x => x.VideoTimestamp).ToListAsync();
 
     var countedEvents = events.Where(e => e.Status is DetectionStatus.Confirmed or DetectionStatus.Corrected).ToList();
     var stats = game.Teams.Select(team => new TeamStatDto(team.Id, team.Name, new Dictionary<string, int>

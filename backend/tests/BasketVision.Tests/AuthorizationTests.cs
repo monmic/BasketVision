@@ -206,12 +206,26 @@ public sealed class AuthorizationTests(ApiFactory factory) : IClassFixture<ApiFa
         Assert.Equal("text/csv", export.Content.Headers.ContentType?.MediaType);
         Assert.Contains(".csv", export.Content.Headers.ContentDisposition?.FileNameStar ?? "");
         Assert.Contains("\"Home\";\"3\";\"0\";\"Da 3\"", await export.Content.ReadAsStringAsync());
+        var secondJob = new AnalysisJob { GameId = a.GameId, Status = AnalysisStatus.Completed };
+        db.AnalysisJobs.Add(secondJob);
+        db.GameEvents.Add(new GameEvent { GameId = a.GameId, AnalysisJobId = secondJob.Id, TeamId = team.Id,
+            Type = EventType.ShotMade, Status = DetectionStatus.Confirmed, MetadataJson = "{\"shotValue\":2}" });
+        await db.SaveChangesAsync();
+        var scoped = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report?analysisId={job.Id}");
+        Assert.Single(scoped.GetProperty("events").EnumerateArray());
+        Assert.Equal(3, scoped.GetProperty("teams")[0].GetProperty("shooting").GetProperty("points").GetInt32());
+        var latest = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report");
+        Assert.Equal(2, latest.GetProperty("teams")[0].GetProperty("shooting").GetProperty("points").GetInt32());
+        var scopedCsv = await a.Client.GetStringAsync($"/api/games/{a.GameId}/report.csv?analysisId={job.Id}");
+        Assert.Contains(job.Id.ToString(), scopedCsv);
+        Assert.DoesNotContain(secondJob.Id.ToString(), scopedCsv);
+        Assert.Equal(HttpStatusCode.NotFound, (await a.Client.GetAsync($"/api/games/{a.GameId}/report?analysisId={Guid.NewGuid()}")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await a.Client.PutAsJsonAsync(path + "/" + eventId, Body(team.Id, "ShotMissed", "Corrected"))).StatusCode);
-        report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report");
+        report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report?analysisId={job.Id}");
         Assert.Equal(0, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMade").GetInt32());
         Assert.Equal(1, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMissed").GetInt32());
         Assert.Equal(HttpStatusCode.OK, (await a.Client.PutAsJsonAsync(path + "/" + eventId, Body(team.Id, "ShotMissed", "Rejected"))).StatusCode);
-        report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report");
+        report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report?analysisId={job.Id}");
         Assert.Equal(0, report.GetProperty("teams")[0].GetProperty("stats").GetProperty("ShotMissed").GetInt32());
         var other = await Account();
         Assert.Equal(HttpStatusCode.NotFound, (await other.Client.GetAsync($"/api/games/{a.GameId}/report.csv")).StatusCode);

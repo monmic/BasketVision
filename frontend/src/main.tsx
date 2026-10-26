@@ -37,6 +37,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
  const [game,setGame]=useState<Game|null>(null);
  const [report,setReport]=useState<Report|null>(null);
  const [job,setJob]=useState<AnalysisJob|null>(null);
+ const [analyses,setAnalyses]=useState<(AnalysisJob&{createdAtUtc:string})[]>([]);
  const [activeAnalyses,setActiveAnalyses]=useState<ActiveAnalysis[]>([]);
  const [vision,setVision]=useState<VisionResult|null>(null);
  const [selectedFile,setSelectedFile]=useState<File|null>(null);
@@ -65,6 +66,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
  };
 
  async function selectGame(id:string, updateUrl=true){
+   setReport(null);setVision(null);setJob(null);setAnalyses([]);
    if(!id){
      setGame(null); setReport(null); setJob(null); setVision(null);
      if(updateUrl) history.replaceState(null,'',location.pathname);
@@ -80,8 +82,9 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    setRimCalibration(null);
    if(updateUrl) history.replaceState(null,'',`${location.pathname}?game=${g.id}`);
 
-   const jr=await fetch(`${API}/api/games/${g.id}/analysis/latest`);
-   setJob(jr.ok ? await jr.json() : null);
+   const jr=await fetch(`${API}/api/games/${g.id}/analyses`);
+   const jobHistory=jr.ok?await jr.json():[];
+   setAnalyses(jobHistory);setJob(jobHistory[0]??null);
  }
 
  useEffect(()=>{
@@ -99,11 +102,14 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
  },[]);
 
  useEffect(()=>{
-   if(!game) return;
-   fetch(`${API}/api/games/${game.id}/report`)
+   setReport(null);
+   if(!game||!job||job.gameId!==game.id) return;
+   let cancelled=false;
+   fetch(`${API}/api/games/${game.id}/report?analysisId=${job.analysisId}`)
      .then(r=>r.ok?r.json():null)
-     .then(setReport);
- },[game?.id,job?.progress,job?.status]);
+     .then(value=>{if(!cancelled)setReport(value)});
+   return()=>{cancelled=true};
+ },[game?.id,job?.analysisId,job?.progress,job?.status]);
 
  useEffect(()=>{
    if(!job?.analysisId || job.status==='Completed' || job.status==='Failed') return;
@@ -112,6 +118,7 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
      if(r.ok){
        const updated:AnalysisJob=await r.json();
        setJob(updated);
+       setAnalyses(items=>items.map(item=>item.analysisId===updated.analysisId?{...item,...updated}:item));
        if(updated.status==='Completed'||updated.status==='Failed') loadActiveAnalyses();
      }
    },1000);
@@ -119,12 +126,15 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
  },[job?.analysisId,job?.status]);
 
  useEffect(()=>{
+   setVision(null);
    if(!job?.analysisId || job.status!=='Completed') return;
+   let cancelled=false;
    reloadMe().catch(()=>{});
    fetch(`${API}/api/analysis/${job.analysisId}/vision`)
      .then(r=>r.ok?r.json():null)
-     .then(setVision)
-     .catch(()=>setVision(null));
+     .then(value=>{if(!cancelled)setVision(value)})
+     .catch(()=>{if(!cancelled)setVision(null)});
+   return()=>{cancelled=true};
  },[job?.analysisId,job?.status]);
 
  async function createGame(e:React.FormEvent<HTMLFormElement>){
@@ -189,6 +199,8 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    const created:AnalysisJob=await r.json();
    if(!created.analysisId){console.error('Analysis response has no analysisId',created);return;}
    setJob(created);
+   const historyResponse=await fetch(`${API}/api/games/${game.id}/analyses`);
+   if(historyResponse.ok)setAnalyses(await historyResponse.json());
    await loadActiveAnalyses();
    await reloadMe();
  }
@@ -218,8 +230,9 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
    if(job?.analysisId===id){setJob(null);setVision(null);}
    await loadActiveAnalyses();
    if(game) {
-     const jr=await fetch(`${API}/api/games/${game.id}/analysis/latest`);
-     setJob(jr.ok ? await jr.json() : null);
+     const jr=await fetch(`${API}/api/games/${game.id}/analyses`);
+     const history=jr.ok?await jr.json():[];
+     setAnalyses(history);setJob(history[0]??null);setReport(null);setVision(null);
    }
  }
 
@@ -266,9 +279,10 @@ function App({me,reloadMe,logout}:{me:Me,reloadMe:()=>Promise<void>,logout:()=>P
 
    {job&&<div className={`analysis-status ${job.status.toLowerCase()}`}><div className="analysis-status-head"><div><b>{job.status==='Completed'?'Analisi completata':job.status==='Failed'?'Analisi fallita':job.status==='Paused'?'Analisi in pausa':job.status==='Pending'?'Analisi in coda':'Analisi CV in corso'}</b>{isRunning&&<span>Puoi lasciare questa pagina: il worker continuerà in background.</span>}{isPaused&&<span>Il checkpoint è stato salvato. Riprendi per continuare dal punto raggiunto.</span>}{job.status==='Failed'&&<span>{job.error??'Errore durante l’analisi'}</span>}</div><strong>{job.status==='Completed'?'100%':`${job.progress}%`}</strong></div>{(isRunning||isPaused)&&<div className="progress-track large"><div className="progress-fill" style={{width:`${Math.max(1,job.progress)}%`}}/></div>}<div className="analysis-controls">{isRunning&&<button onClick={()=>pauseAnalysis(job.analysisId)}>Pausa</button>}{isPaused&&<button onClick={()=>resumeAnalysis(job.analysisId)}>Riprendi</button>}<button className="danger" onClick={()=>deleteAnalysis(job.analysisId)}>Elimina elaborazione</button></div></div>}
 
+   {analyses.length>0&&<label>Analisi visualizzata<select value={job?.analysisId??''} onChange={e=>{setReport(null);setVision(null);setJob(analyses.find(a=>a.analysisId===e.target.value)??null)}}>{analyses.map(a=><option key={a.analysisId} value={a.analysisId}>{new Date(a.createdAtUtc).toLocaleString('it-IT')} · {a.analysisId.slice(0,8)}</option>)}</select></label>}
    {game.videoPath&&<video ref={video} controls={!calibratingRim} className={calibratingRim?'rim-calibration-active':''} onClick={selectRim} src={`${API}/api/games/${game.id}/video`}/>}</section>
 
-   {report&&game&&<><ExportReport key={`export-${game.id}`} gameId={game.id}/><ShotReview key={game.id} gameId={game.id} teams={game.teams} events={report.events} analysisId={job?.status==='Completed'?job.analysisId:undefined} currentTime={()=>video.current?.currentTime??0} seek={seek} reload={async()=>{const r=await fetch(`${API}/api/games/${game.id}/report`);if(r.ok)setReport(await r.json())}}/></>}
+   {report&&game&&job&&<><ExportReport key={`export-${job.analysisId}`} gameId={game.id} analysisId={job.analysisId}/><ShotReview key={job.analysisId} gameId={game.id} teams={game.teams} events={report.events} analysisId={job?.status==='Completed'?job.analysisId:undefined} currentTime={()=>video.current?.currentTime??0} seek={seek} reload={async()=>{const r=await fetch(`${API}/api/games/${game.id}/report?analysisId=${job.analysisId}`);if(r.ok)setReport(await r.json())}}/></>}
    {report&&<section className="card"><h2>Punti e percentuali</h2><p>Conteggi dei tiri confermati e classificati. I tiri da specificare sono esclusi dai punti e dalle percentuali per categoria.</p>{report.teams.map(t=><div key={t.teamId}><h3>{t.teamName}: {t.shooting?.points??0} punti</h3><p>Tiri con valore da specificare: {t.shooting?.unspecified??0}</p><table><thead><tr><th>Tipo</th><th>Segnati / Tentati</th><th>Percentuale</th></tr></thead><tbody>{t.shooting?.categories.map(c=><tr key={c.value}><td>{c.value===1?'Liberi':`Da ${c.value} punti`}</td><td>{c.made} / {c.attempted}</td><td>{c.percentage==null?'—':`${c.percentage.toFixed(1)}%`}</td></tr>)}</tbody></table></div>)}</section>}
    {vision&&<section className="card">
      <h2>Vision debug — {vision.mode==='vision-cv02.4'?'CV-02.4':vision.mode==='vision-cv02.3'?'CV-02.3':vision.mode==='vision-cv02.2'?'CV-02.2':vision.mode==='vision-cv02.1'?'CV-02.1':'CV-02'}</h2>

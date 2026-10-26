@@ -8,22 +8,25 @@ namespace BasketVision.Api;
 
 public static class ReportExport
 {
-    public static async Task<IResult> Download(Guid id, BasketVisionDbContext db, AccessService access, ICurrentUser user)
+    public static async Task<IResult> Download(Guid id, Guid? analysisId, BasketVisionDbContext db, AccessService access, ICurrentUser user)
     {
         var game = await db.Games.Include(g => g.Teams).SingleOrDefaultAsync(g => g.Id == id);
         if (game is null) return Results.NotFound();
         var denial = AccessService.Feature(await access.GetAccess(user.UserId!.Value, user.IsAdmin), Features.AdvancedEvents);
         if (denial != null) return AccessService.Denied(denial);
-        var events = await db.GameEvents.Where(e => e.GameId == id).OrderBy(e => e.VideoTimestamp).ThenBy(e => e.Id).ToListAsync();
-        return Results.File(Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(Render(game, events))).ToArray(),
-            "text/csv; charset=utf-8", $"basketvision-{id}.csv");
+        var selected = await AnalysisSelection.Resolve(db, id, analysisId);
+        if (analysisId.HasValue && selected is null) return Results.NotFound();
+        var events = await db.GameEvents.Where(e => e.GameId == id && e.AnalysisJobId == selected).OrderBy(e => e.VideoTimestamp).ThenBy(e => e.Id).ToListAsync();
+        return Results.File(Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(Render(game, events, selected))).ToArray(),
+            "text/csv; charset=utf-8", $"basketvision-{id}-{selected}.csv");
     }
 
-    public static string Render(Game game, IReadOnlyList<GameEvent> events)
+    public static string Render(Game game, IReadOnlyList<GameEvent> events, Guid? analysisId = null)
     {
         var csv = new StringBuilder();
         void Row(params object?[] cells) => csv.AppendLine(string.Join(";", cells.Select(Cell)));
         Row("Partita", game.Name);
+        Row("Analisi", analysisId);
         Row("Riepilogo squadra", "Punti", "Tiri da specificare", "Categoria", "Segnati", "Tentati", "Percentuale");
         foreach (var team in game.Teams.OrderBy(t => t.Side))
         {

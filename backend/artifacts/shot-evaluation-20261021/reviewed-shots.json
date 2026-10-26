@@ -1,0 +1,74 @@
+[
+  {
+    "Id": "1b8a7f81-9c0a-4c40-b4d5-f3ff3989ecfd",
+    "GameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+    "AnalysisJobId": "ce355034-9329-4fff-bfd4-9b9a2c96a033",
+    "Type": 1,
+    "TeamId": "b9028bc7-1b62-421e-92aa-1d40aad2b0ea",
+    "VideoTimestamp": 434.68,
+    "EndTimestamp": null,
+    "Confidence": 1,
+    "Status": 2,
+    "MetadataJson": "{\"source\":\"manual-review\",\"shotValue\":3}"
+  },
+  {
+    "Id": "b3c1a6a1-d849-42dc-8097-002df4413d8c",
+    "GameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+    "AnalysisJobId": "ce355034-9329-4fff-bfd4-9b9a2c96a033",
+    "Type": 1,
+    "TeamId": "b9028bc7-1b62-421e-92aa-1d40aad2b0ea",
+    "VideoTimestamp": 592.85,
+    "EndTimestamp": null,
+    "Confidence": 1,
+    "Status": 2,
+    "MetadataJson": "{\"source\":\"manual-review\",\"shotValue\":3}"
+  },
+  {
+    "Id": "4f5a6ec5-ae16-4f3f-9797-b751322dd78a",
+    "GameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+    "AnalysisJobId": "ce355034-9329-4fff-bfd4-9b9a2c96a033",
+    "Type": 0,
+    "TeamId": "b9028bc7-1b62-421e-92aa-1d40aad2b0ea",
+    "VideoTimestamp": 1175.91,
+    "EndTimestamp": null,
+    "Confidence": 1,
+    "Status": 2,
+    "MetadataJson": "{\"source\":\"manual-review\",\"shotValue\":2}"
+  },
+  {
+    "Id": "f3a20bfa-9296-4d73-a78e-ce574d75ada7",
+    "GameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+    "AnalysisJobId": "ce355034-9329-4fff-bfd4-9b9a2c96a033",
+    "Type": 1,
+    "TeamId": "61c1fd44-8ee4-4666-b9c2-4b8e22df1f68",
+    "VideoTimestamp": 1191.56,
+    "EndTimestamp": null,
+    "Confidence": 1,
+    "Status": 2,
+    "MetadataJson": "{\"source\":\"manual-review\",\"shotValue\":2}"
+  },
+  {
+    "Id": "2647c2a8-c3bd-4fb2-b704-7d64aadeb4d4",
+    "GameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+    "AnalysisJobId": "ce355034-9329-4fff-bfd4-9b9a2c96a033",
+    "Type": 0,
+    "TeamId": "b9028bc7-1b62-421e-92aa-1d40aad2b0ea",
+    "VideoTimestamp": 1199.54,
+    "EndTimestamp": null,
+    "Confidence": 1,
+    "Status": 2,
+    "MetadataJson": "{\"source\":\"manual-review\",\"shotValue\":3}"
+  },
+  {
+    "Id": "2b435850-1b9d-4452-bfa0-cb3b65744af1",
+    "GameId": "35b68704-541f-4c6d-b8ab-45228266102a",
+    "AnalysisJobId": "ce355034-9329-4fff-bfd4-9b9a2c96a033",
+    "Type": 0,
+    "TeamId": "61c1fd44-8ee4-4666-b9c2-4b8e22df1f68",
+    "VideoTimestamp": 1207.89,
+    "EndTimestamp": null,
+    "Confidence": 1,
+    "Status": 2,
+    "MetadataJson": "{\"source\":\"manual-review\",\"shotValue\":2}"
+  }
+]
