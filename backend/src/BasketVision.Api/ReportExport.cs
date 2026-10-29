@@ -12,7 +12,9 @@ public static class ReportExport
     {
         var game = await db.Games.Include(g => g.Teams).SingleOrDefaultAsync(g => g.Id == id);
         if (game is null) return Results.NotFound();
-        var denial = AccessService.Feature(await access.GetAccess(user.UserId!.Value, user.IsAdmin), Features.AdvancedEvents);
+        var account = await access.GetAccess(user.UserId!.Value, user.IsAdmin);
+        var denial = AccessService.Feature(account, Features.AdvancedEvents)
+            ?? AccessService.Feature(account, Features.ExportCsv);
         if (denial != null) return AccessService.Denied(denial);
         var selected = await AnalysisSelection.Resolve(db, id, analysisId);
         if (analysisId.HasValue && selected is null) return Results.NotFound();

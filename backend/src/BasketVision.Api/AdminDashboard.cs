@@ -24,7 +24,7 @@ public static class AdminDashboard
             validSessions = valid.Count(s => s.UserId == u.Id),
             onlineSessions = online.Count(s => s.UserId == u.Id)
         }).OrderByDescending(u => u.onlineSessions > 0).ThenByDescending(u => u.lastSeenAt).ThenBy(u => u.Id).Take(100).ToListAsync();
-        var jobGroups = await db.AnalysisJobs.GroupBy(j => j.Status).Select(g => new { status = g.Key, count = g.Count() }).ToListAsync();
+        var jobGroups = await db.AnalysisJobs.Where(j => !j.IsManualReview).GroupBy(j => j.Status).Select(g => new { status = g.Key, count = g.Count() }).ToListAsync();
         var jobs = Enum.GetValues<AnalysisStatus>().ToDictionary(s => s.ToString(), s => jobGroups.FirstOrDefault(g => g.status == s)?.count ?? 0);
         return Results.Ok(new {
             generatedAt = now, onlineWindowMinutes = OnlineWindowMinutes,

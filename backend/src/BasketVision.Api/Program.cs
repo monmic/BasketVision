@@ -71,6 +71,7 @@ app.MapGet("/api/games/{id:guid}/video", async (Guid id, BasketVisionDbContext d
 });
 
 app.MapPost("/api/games/{id:guid}/analysis", GameMutations.Start);
+app.MapPost("/api/games/{id:guid}/review", ShotReviews.Open);
 
 app.MapGet("/api/analysis/{id:guid}", async (Guid id, BasketVisionDbContext db) =>
 {
@@ -79,6 +80,7 @@ app.MapGet("/api/analysis/{id:guid}", async (Guid id, BasketVisionDbContext db) 
     {
         analysisId = job.Id,
         job.GameId,
+        job.IsManualReview,
         job.Status,
         job.Progress,
         job.Error
@@ -187,7 +189,7 @@ app.MapGet("/api/games/{id:guid}/analyses", async (Guid id, BasketVisionDbContex
 {
     if (!await db.Games.AnyAsync(g => g.Id == id)) return Results.NotFound();
     return Results.Ok(await db.AnalysisJobs.Where(j => j.GameId == id).OrderByDescending(j => j.CreatedAtUtc)
-        .ThenByDescending(j => j.Id).Select(j => new { analysisId = j.Id, j.GameId, j.Status, j.Progress, j.Error, j.CreatedAtUtc }).ToListAsync());
+        .ThenByDescending(j => j.Id).Select(j => new { analysisId = j.Id, j.GameId, j.IsManualReview, j.Status, j.Progress, j.Error, j.CreatedAtUtc }).ToListAsync());
 });
 
 app.MapGet("/api/games/{id:guid}/events", async (Guid id, Guid? analysisId, BasketVisionDbContext db, AccessService access, ICurrentUser user) =>
@@ -220,12 +222,12 @@ app.MapGet("/api/games/{id:guid}/report", async (Guid id, Guid? analysisId, Bask
     {
         ["ShotMade"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.ShotMade),
         ["ShotMissed"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.ShotMissed),
-        ["OffensiveRebound"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.OffensiveRebound),
-        ["DefensiveRebound"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.DefensiveRebound),
-        ["Turnover"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Turnover),
-        ["Steal"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Steal),
-        ["Assist"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Assist),
-        ["Block"] = events.Count(e => e.TeamId == team.Id && e.Type == EventType.Block)
+        ["OffensiveRebound"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.OffensiveRebound),
+        ["DefensiveRebound"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.DefensiveRebound),
+        ["Turnover"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.Turnover),
+        ["Steal"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.Steal),
+        ["Assist"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.Assist),
+        ["Block"] = countedEvents.Count(e => e.TeamId == team.Id && e.Type == EventType.Block)
     }, ShotReviews.Shooting(events, team.Id))).ToList();
 
     var eventDtos = events.Select(e => new GameEventDto(e.Id, e.Type,

@@ -8,6 +8,30 @@ namespace BasketVision.Api;
 
 public static class ShotReviews
 {
+    public static async Task<IResult> Open(Guid id, BasketVisionDbContext db, AccessService access, ICurrentUser user)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync();
+        // Serialize against video replacement and concurrent review requests.
+        var owner = await db.Games.Where(g => g.Id == id).Select(g => new { g.OwnerUserId }).SingleOrDefaultAsync();
+        if (owner is null) return Results.NotFound();
+        await access.LockUser(owner.OwnerUserId ?? user.UserId!.Value);
+        var game = await db.Games.FromSqlInterpolated($"SELECT * FROM \"Games\" WHERE \"Id\" = {id} FOR UPDATE").SingleOrDefaultAsync();
+        if (game is null) return Results.NotFound();
+        var denial = AccessService.Feature(await access.GetAccess(user.UserId!.Value, user.IsAdmin), Features.AdvancedEvents);
+        if (denial != null) return AccessService.Denied(denial);
+        if (string.IsNullOrWhiteSpace(game.VideoPath) || !File.Exists(game.VideoPath) || game.VideoDurationSeconds is not > 0)
+            return Results.BadRequest("Carica un video prima di iniziare la revisione.");
+        var job = await db.AnalysisJobs.Where(j => j.GameId == id && j.IsManualReview).OrderByDescending(j => j.CreatedAtUtc).FirstOrDefaultAsync();
+        if (job is null)
+        {
+            job = new AnalysisJob { GameId = id, IsManualReview = true, Status = AnalysisStatus.Completed, Progress = 100, CompletedAtUtc = DateTime.UtcNow };
+            db.AnalysisJobs.Add(job);
+            await db.SaveChangesAsync();
+        }
+        await tx.CommitAsync();
+        return Results.Ok(new { analysisId = job.Id, job.GameId, job.Status, job.Progress, job.IsManualReview, job.CreatedAtUtc });
+    }
+
     public static int? Value(GameEvent ev)
     {
         try { return JsonNode.Parse(ev.MetadataJson ?? "{}")?["shotValue"]?.GetValue<int>() is int v && v is >= 1 and <= 3 ? v : null; }

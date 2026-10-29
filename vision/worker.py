@@ -689,6 +689,18 @@ class BallTracker:
         return len(self.confirmed_track_ids)
 
 
+def checkpoint_resume_frame(checkpoint, start_frame, fps):
+    """Checkpoints include the last processed frame; resume at the next one."""
+    if fps <= 0:
+        return start_frame
+    if checkpoint.get("nextFrameIndex") is not None:
+        return max(start_frame, int(checkpoint["nextFrameIndex"]))
+    if checkpoint.get("resumeTimestamp") is not None:
+        # Legacy checkpoints store the timestamp of the already counted frame.
+        return max(start_frame, int(round(float(checkpoint["resumeTimestamp"]) * fps)) + 1)
+    return start_frame
+
+
 def process_vision(job_id, game_id, video_path):
     if not video_path:
         raise RuntimeError("Game has no video path")
@@ -720,8 +732,10 @@ def process_vision(job_id, game_id, video_path):
 
     checkpoint = load_checkpoint(job_id) or {}
     resume_seconds = max(start_seconds, float(checkpoint.get("resumeTimestamp", start_seconds) or start_seconds))
-    resume_frame = int(resume_seconds * fps) if fps > 0 else start_frame
-    if resume_seconds > 0:
+    resume_frame = checkpoint_resume_frame(checkpoint, start_frame, fps)
+    if fps > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, resume_frame)
+    elif resume_seconds > 0:
         cap.set(cv2.CAP_PROP_POS_MSEC, resume_seconds * 1000.0)
 
     person_model = get_person_model()
@@ -887,6 +901,7 @@ def process_vision(job_id, game_id, video_path):
                 pct = min(95, max(2, int(((current_index - start_frame) / range_frames) * 95)))
                 state = {
                     "resumeTimestamp": timestamp,
+                    "nextFrameIndex": frame_index,
                     "processedPersonFrames": processed_person_frames,
                     "processedBallFrames": processed_ball_frames,
                     "personDetections": person_detections,

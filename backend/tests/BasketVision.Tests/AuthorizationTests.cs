@@ -75,6 +75,47 @@ public sealed class AuthorizationTests(ApiFactory factory) : IClassFixture<ApiFa
     private static Task<HttpResponseMessage> Start(HttpClient client, Guid gameId, double? end = 60) =>
         client.PostAsJsonAsync($"/api/games/{gameId}/analysis", new { startSeconds = 0, endSeconds = end });
 
+    [Fact] public async Task Assisted_review_opens_without_worker_and_reuses_session_without_usage()
+    {
+        var a = await Account(admin: true);
+        var path = $"/api/games/{a.GameId}/review";
+        var response = await a.Client.PostAsync(path, null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var opened = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var jobId = opened.GetProperty("analysisId").GetGuid();
+        Assert.True(opened.GetProperty("isManualReview").GetBoolean());
+        Assert.Equal("Completed", opened.GetProperty("status").GetString());
+        var reopened = await (await a.Client.PostAsync(path, null)).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(jobId, reopened.GetProperty("analysisId").GetGuid());
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BasketVisionDbContext>();
+        Assert.False(await db.UsageRecords.AnyAsync(u => u.AnalysisJobId == jobId));
+        var team = new Team { GameId = a.GameId, Name = "Home", Side = TeamSide.A };
+        db.Teams.Add(team); await db.SaveChangesAsync();
+        var saved = await a.Client.PostAsJsonAsync($"/api/games/{a.GameId}/shots", new {
+            analysisJobId = jobId, teamId = team.Id, videoTimestamp = 42, shotValue = 2, type = "ShotMade", status = "Confirmed" });
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var report = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/report?analysisId={jobId}");
+        Assert.Equal(2, report.GetProperty("teams")[0].GetProperty("shooting").GetProperty("points").GetInt32());
+        var history = await a.Client.GetFromJsonAsync<JsonElement>($"/api/games/{a.GameId}/analyses");
+        Assert.True(history[0].GetProperty("isManualReview").GetBoolean());
+        Assert.Equal(HttpStatusCode.BadRequest, (await a.Client.PostAsync($"/api/analysis/{jobId}/resume", null)).StatusCode);
+    }
+
+    [Fact] public async Task Assisted_review_enforces_ownership_capability_and_uploaded_video()
+    {
+        var owner = await Account();
+        var other = await Account();
+        Assert.Equal(HttpStatusCode.NotFound, (await other.Client.PostAsync($"/api/games/{owner.GameId}/review", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await owner.Client.PostAsync($"/api/games/{owner.GameId}/review", null)).StatusCode);
+        var admin = await Account(admin: true);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BasketVisionDbContext>();
+        var game = await db.Games.IgnoreQueryFilters().SingleAsync(g => g.Id == admin.GameId);
+        game.VideoPath = null; await db.SaveChangesAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.Client.PostAsync($"/api/games/{admin.GameId}/review", null)).StatusCode);
+    }
+
     [Fact] public async Task Anonymous_is_401_and_health_is_public()
     {
         var client = factory.CreateClient();
@@ -230,6 +271,65 @@ public sealed class AuthorizationTests(ApiFactory factory) : IClassFixture<ApiFa
         var other = await Account();
         Assert.Equal(HttpStatusCode.NotFound, (await other.Client.GetAsync($"/api/games/{a.GameId}/report.csv")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await other.Client.PutAsJsonAsync(path + "/" + eventId, Body(team.Id, "ShotMade", "Confirmed"))).StatusCode);
+    }
+
+    [Fact] public async Task Report_counts_only_confirmed_or_corrected_events_for_every_statistic()
+    {
+        var account = await Account(true);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BasketVisionDbContext>();
+        var team = new Team { GameId = account.GameId, Name = "Home", Side = TeamSide.A };
+        var job = new AnalysisJob { GameId = account.GameId, Status = AnalysisStatus.Completed };
+        db.Teams.Add(team);
+        db.AnalysisJobs.Add(job);
+        var types = new[] { EventType.OffensiveRebound, EventType.DefensiveRebound,
+            EventType.Turnover, EventType.Steal, EventType.Assist, EventType.Block };
+        foreach (var type in types)
+            foreach (var status in Enum.GetValues<DetectionStatus>())
+                db.GameEvents.Add(new GameEvent { GameId = account.GameId, AnalysisJobId = job.Id,
+                    TeamId = team.Id, Type = type, Status = status, VideoTimestamp = 10 });
+        await db.SaveChangesAsync();
+
+        var report = await account.Client.GetFromJsonAsync<JsonElement>($"/api/games/{account.GameId}/report?analysisId={job.Id}");
+        var stats = report.GetProperty("teams")[0].GetProperty("stats");
+        foreach (var type in types)
+            Assert.Equal(2, stats.GetProperty(type.ToString()).GetInt32());
+        // Unreviewed and rejected observations stay available for review, outside totals.
+        Assert.Equal(types.Length * 4, report.GetProperty("events").GetArrayLength());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Csv_export_requires_both_event_and_export_capabilities(bool advancedEvents, bool exportCsv)
+    {
+        var account = await Account();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<BasketVisionDbContext>();
+        var plan = new Plan { Name = $"Export test {Guid.NewGuid():N}", Entitlements = [
+            new PlanEntitlement { Feature = Features.AdvancedEvents, Enabled = advancedEvents },
+            new PlanEntitlement { Feature = Features.ExportCsv, Enabled = exportCsv }
+        ] };
+        db.Plans.Add(plan);
+        var subscription = await db.Subscriptions.SingleAsync(s => s.UserId == account.UserId);
+        subscription.PlanId = plan.Id;
+        await db.SaveChangesAsync();
+
+        var response = await account.Client.GetAsync($"/api/games/{account.GameId}/report.csv");
+        if (advancedEvents && exportCsv)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("text/csv", response.Content.Headers.ContentType?.MediaType);
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(advancedEvents ? Features.ExportCsv : Features.AdvancedEvents,
+                error.GetProperty("feature").GetString());
+        }
     }
 
     private static async Task AssertLimit(HttpResponseMessage response,string feature)

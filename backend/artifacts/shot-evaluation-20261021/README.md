@@ -2,6 +2,16 @@
 
 ## Aggiornamento del 26 ottobre: confronto precedente superato
 
+Audit successivo completato: [copertura palla e prova della cadenza tile](ball-gap-audit/README.md).
+Tile ogni frame non risolve i vuoti di detection nel campione; variante non promossa.
+
+Completata anche la [prova del ritaglio centrato sul ferro](rim-roi-trial/README.md):
+nessun guadagno nelle detection accettate o nei candidati tiro; variante non promossa.
+
+Passo successivo: [screening dei modelli locali e preparazione dei casi difficili](specialist-screening/README.md).
+Nessun modello promosso; preparata la revisione dei 19 casi condivisi e richiesto
+un nuovo video locale per una validazione fuori dalle sorgenti già esaminate.
+
 La verifica visiva su 32 frame dell'intervallo originale e su tutti i frame con
 detection accettate mostra un ferro largo circa **26 px**, non 75 px, alla
 risoluzione originale 854×480. Le 48 sovrapposizioni controllate sono in

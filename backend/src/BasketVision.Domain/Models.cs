@@ -36,6 +36,7 @@ public sealed class AnalysisJob
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid GameId { get; set; }
+    public bool IsManualReview { get; set; }
     public AnalysisStatus Status { get; set; } = AnalysisStatus.Pending;
     public int Progress { get; set; }
     public string? Error { get; set; }

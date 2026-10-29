@@ -1,0 +1,17 @@
+*.pt
+*.whl
+*.json
+*.jpg
+*.png
+*.log
+screening/
+attalla-screening/
+*-boards/
+automatic-roi/
+continuous/
+continuous-review/
+distance-replay/
+temporal-replay/
+worker-distance-prototype.py
+semantic-examples/
+__pycache__/
